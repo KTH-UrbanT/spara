@@ -1,4 +1,17 @@
 services:
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      target: production
+      args:
+        NODE_ENV: production
+    environment:
+      - NODE_ENV=production
+    ports:
+      - "80:80"
+    command: ["nginx", "-g", "daemon off;"]
+
   server:
     build:
       context: ./server
@@ -6,6 +19,9 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - ENV=production
+      - DATABASE_URL=postgresql://postgres:postgres@message_store:5432/message_store
+    depends_on:
+      - message_store
     ports:
       - "8000:8000" # Expose FastAPI on port 8000
     command:
@@ -20,15 +36,16 @@ services:
         "4",
       ]
 
-  client:
-    build:
-      context: ./client
-      dockerfile: Dockerfile
-      target: production
-      args:
-        NODE_ENV: production
+  message_store:
+    image: postgres:13
     environment:
-      - NODE_ENV=production
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: message_store
     ports:
-      - "80:80"
-    command: ["nginx", "-g", "daemon off;"]
+      - "5432:5432"
+    volumes:
+      - message_store_data:/var/lib/postgresql/data
+
+volumes:
+  message_store_data:
