@@ -1,0 +1,21 @@
+services:
+  # server:
+  #   build: ./server
+  #   ports:
+  #     - "5000:5000"
+  #   depends_on:
+  #     - data
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      target: development # Uses the development stage with npm
+    environment:
+      - NODE_ENV=development
+    ports:
+      - "5173:5173" # For Vite's dev server
+    volumes:
+      - ./client:/app # Mounts source code for live updates
+      - /app/node_modules # Keeps node_modules from being overwritten
+    command: ["npm", "run", "dev"] # Runs Vite in development mode

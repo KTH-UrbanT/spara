@@ -1,0 +1,13 @@
+services:
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        NODE_ENV: production
+    environment:
+      - NODE_ENV=production
+    ports:
+      - "80:80"
+    command: ["nginx", "-g", "daemon off;"]
