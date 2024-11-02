@@ -29,3 +29,8 @@ Build and run the production environment:
 ```
 docker-compose -f docker-compose.prod.yml up --build -d
 ```
+
+## Accessing the Services
+
+- ReactJS client - `http://<server-ip>:5173`
+- FastAPI server - `http://<server-ip>:8000`
