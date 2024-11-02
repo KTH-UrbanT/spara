@@ -1,10 +1,14 @@
 services:
-  # server:
-  #   build: ./server
-  #   ports:
-  #     - "5000:5000"
-  #   depends_on:
-  #     - data
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000" # Expose FastAPI on port 8000
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./server:/app
 
   client:
     build:
