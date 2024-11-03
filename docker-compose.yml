@@ -37,6 +37,17 @@ services:
       - "5432:5432"
     volumes:
       - message_store_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com # Set a default email
+      PGADMIN_DEFAULT_PASSWORD: admin # Set a default password
+    ports:
+      - "5050:80" # Exposes pgAdmin on localhost:5050
+    depends_on:
+      - message_store
 
 volumes:
   message_store_data:
