@@ -1,9 +1,9 @@
-[submodule "server"]
-	path = server
+[submodule "message_service"]
+	path = message_service
 	url = git@github.com:KTH-UrbanT/spara-server.git
-[submodule "client"]
-	path = client
+[submodule "frontend"]
+	path = frontend
 	url = git@github.com:KTH-UrbanT/spara-client.git
-[submodule "backend"]
-	path = backend
+[submodule "llm_service"]
+	path = llm_service
 	url = git@github.com:KTH-UrbanT/spara-backend.git
