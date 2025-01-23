@@ -4,3 +4,6 @@
 [submodule "client"]
 	path = client
 	url = git@github.com:KTH-UrbanT/spara-client.git
+[submodule "backend"]
+	path = backend
+	url = git@github.com:KTH-UrbanT/spara-backend.git
