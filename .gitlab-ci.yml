@@ -1,0 +1,46 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  DOCKER_IMAGE: spara:latest
+  SSH_HOST: oden.abe.kth.se
+  SSH_USER: oleksii
+  DEPLOY_PATH: /spara
+
+before_script:
+  - mkdir -p ~/.ssh
+  - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+  - chmod 600 ~/.ssh/id_rsa
+  - ssh-keyscan -H $SSH_HOST >> ~/.ssh/known_hosts
+
+build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    # Build Docker image
+    - docker build -t $DOCKER_IMAGE .
+
+deploy:
+  stage: deploy
+  script:
+    # Push Docker image to the server (optional if server pulls image directly)
+    - |
+      ssh $SSH_USER@$SSH_HOST << EOF
+      mkdir -p $DEPLOY_PATH
+      EOF
+
+    # Transfer docker-compose.yml or deployment files
+    - scp docker-compose.yml $SSH_USER@$SSH_HOST:$DEPLOY_PATH/
+
+    # Run Docker Compose on the server
+    - |
+      ssh $SSH_USER@$SSH_HOST << EOF
+      cd $DEPLOY_PATH
+      docker-compose pull
+      docker-compose up -d --build
+      EOF
+  only:
+    - main # Run deployment only on the main branch
