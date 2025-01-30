@@ -35,14 +35,14 @@ deploy:
       EOF
 
     # Transfer docker-compose.yml or deployment files
-    - scp docker-compose.yml $SSH_USER@$SSH_HOST:$DEPLOY_PATH/
+    - scp infra/docker-compose.prod.yml $SSH_USER@$SSH_HOST:$DEPLOY_PATH/
 
     # Run Docker Compose on the server
     - |
       ssh $SSH_USER@$SSH_HOST << EOF
       cd $DEPLOY_PATH
-      docker-compose pull
-      docker-compose up -d --build
+      docker-compose -f docker-compose.prod.yml pull
+      docker-compose -f docker-compose.prod.yml up -d --build
       EOF
   only:
     - main # Run deployment only on the main branch
