@@ -2,8 +2,9 @@
 
 This is a cumulative repository for SPARA - chatbot for energy efficiency in buildings. It includes the following components:
 
-- **server** - Python Flask based web server
-- **client** - React JS based client
+- **frontend** - React JS based client
+- **message-service** - Python Fast API-based web server
+- **llm-service** - Python langchain-based language service
 
 To fetch the project codebase to the local machine, the following should be done:
 
@@ -19,7 +20,7 @@ git clone --recursive git@github.com:KTH-UrbanT/spara.git
 Build and run the development environment:
 
 ```
-docker-compose up --build
+docker-compose -f infra/docker-compose.yml up --build
 ```
 
 ### Production
@@ -27,7 +28,7 @@ docker-compose up --build
 Build and run the production environment:
 
 ```
-docker-compose -f docker-compose.prod.yml up --build -d
+docker-compose -f infra/docker-compose.prod.yml up --build -d
 ```
 
 ## Accessing the Services

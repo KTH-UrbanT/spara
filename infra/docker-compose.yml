@@ -1,7 +1,7 @@
 services:
   client:
     build:
-      context: ./client
+      context: ../frontend
       dockerfile: Dockerfile
       target: development # Uses the development stage with npm
     environment:
@@ -9,13 +9,13 @@ services:
     ports:
       - "5173:5173" # For Vite's dev server
     volumes:
-      - ./client:/app # Mounts source code for live updates
+      - ../frontend:/app # Mounts source code for live updates
       - /app/node_modules # Keeps node_modules from being overwritten
     command: ["npm", "run", "dev"] # Runs Vite in development mode
 
   server:
     build:
-      context: ./server
+      context: ../message-service
       dockerfile: Dockerfile
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@message_store:5432/message_store
@@ -25,7 +25,7 @@ services:
     ports:
       - "8000:8000" # Expose FastAPI on port 8000
     volumes:
-      - ./server:/app
+      - ../message-service:/app
 
   message_store:
     image: postgres:13
@@ -37,7 +37,7 @@ services:
       - "5432:5432"
     volumes:
       - message_store_data:/var/lib/postgresql/data
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ../shared/db/init.sql:/docker-entrypoint-initdb.d/init.sql
 
   pgadmin:
     image: dpage/pgadmin4
