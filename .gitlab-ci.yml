@@ -20,6 +20,8 @@ build:
   services:
     - docker:dind
   script:
+    # Change to the infra directory where Docker files are
+    - cd infra
     # Build Docker image
     - docker build -t $DOCKER_IMAGE .
 
