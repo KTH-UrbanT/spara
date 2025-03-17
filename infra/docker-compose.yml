@@ -1,53 +1,107 @@
 services:
-  client:
-    build:
-      context: ../frontend
-      dockerfile: Dockerfile
-      target: development # Uses the development stage with npm
-    environment:
-      - NODE_ENV=development
+  ############################
+  #  1) Redis                #
+  ############################
+  redis:
+    image: redis:latest
+    container_name: spara-redis
     ports:
-      - "5173:5173" # For Vite's dev server
-    volumes:
-      - ../frontend:/app # Mounts source code for live updates
-      - /app/node_modules # Keeps node_modules from being overwritten
-    command: ["npm", "run", "dev"] # Runs Vite in development mode
+      - "6379:6379"
 
-  server:
+  ############################
+  #  2) Message Service      #
+  ############################
+  message-service:
     build:
       context: ../message-service
       dockerfile: Dockerfile
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@message_store:5432/message_store
-      - PYTHONUNBUFFERED=1
+    container_name: spara-message-service
     depends_on:
-      - message_store
+      - redis
     ports:
-      - "8000:8000" # Expose FastAPI on port 8000
-    volumes:
-      - ../message-service:/app
-
-  message_store:
-    image: postgres:13
+      - "8000:8000"
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: message_store
-    ports:
-      - "5432:5432"
-    volumes:
-      - message_store_data:/var/lib/postgresql/data
-      - ../shared/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      REDIS_HOST: redis
 
-  pgadmin:
-    image: dpage/pgadmin4
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com # Set a default email
-      PGADMIN_DEFAULT_PASSWORD: admin # Set a default password
-    ports:
-      - "5050:80" # Exposes pgAdmin on localhost:5050
+  ############################
+  #  3) LLM Service          #
+  ############################
+  llm-service:
+    build:
+      context: ../llm-service
+      dockerfile: Dockerfile
+    container_name: spara-llm-service
     depends_on:
-      - message_store
+      - redis
+    environment:
+      REDIS_HOST: redis
 
-volumes:
-  message_store_data:
+  ############################
+  #  4) Frontend (React)     #
+  ############################
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: spara-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - message-service
+      - llm-service
+
+  ############################
+  #  OLD CODE                #
+  ############################
+#   client:
+#     build:
+#       context: ../frontend
+#       dockerfile: Dockerfile
+#       target: development # Uses the development stage with npm
+#     environment:
+#       - NODE_ENV=development
+#     ports:
+#       - "5173:5173" # For Vite's dev server
+#     volumes:
+#       - ../frontend:/app # Mounts source code for live updates
+#       - /app/node_modules # Keeps node_modules from being overwritten
+#     command: ["npm", "run", "dev"] # Runs Vite in development mode
+
+#   server:
+#     build:
+#       context: ../message-service
+#       dockerfile: Dockerfile
+#     environment:
+#       - DATABASE_URL=postgresql://postgres:postgres@message_store:5432/message_store
+#       - PYTHONUNBUFFERED=1
+#     depends_on:
+#       - message_store
+#     ports:
+#       - "8000:8000" # Expose FastAPI on port 8000
+#     volumes:
+#       - ../message-service:/app
+
+#   message_store:
+#     image: postgres:13
+#     environment:
+#       POSTGRES_USER: postgres
+#       POSTGRES_PASSWORD: postgres
+#       POSTGRES_DB: message_store
+#     ports:
+#       - "5432:5432"
+#     volumes:
+#       - message_store_data:/var/lib/postgresql/data
+#       - ../shared/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+#   pgadmin:
+#     image: dpage/pgadmin4
+#     environment:
+#       PGADMIN_DEFAULT_EMAIL: admin@admin.com # Set a default email
+#       PGADMIN_DEFAULT_PASSWORD: admin # Set a default password
+#     ports:
+#       - "5050:80" # Exposes pgAdmin on localhost:5050
+#     depends_on:
+#       - message_store
+
+# volumes:
+#   message_store_data:
