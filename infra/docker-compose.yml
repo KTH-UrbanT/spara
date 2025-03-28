@@ -1,54 +1,68 @@
 services:
-  ############################
-  #  1) Redis                #
-  ############################
-  redis:
-    image: redis:latest
-    container_name: spara-redis
-    ports:
-      - "6379:6379"
-
-  ############################
-  #  2) Message Service      #
-  ############################
-  message-service:
-    build:
-      context: ../message-service
-      dockerfile: Dockerfile
-    container_name: spara-message-service
-    depends_on:
-      - redis
-    ports:
-      - "8000:8000"
+  message_store:
+    image: postgres:13
     environment:
-      REDIS_HOST: redis
-
-  ############################
-  #  3) LLM Service          #
-  ############################
-  llm-service:
-    build:
-      context: ../llm-service
-      dockerfile: Dockerfile
-    container_name: spara-llm-service
-    depends_on:
-      - redis
-    environment:
-      REDIS_HOST: redis
-
-  ############################
-  #  4) Frontend (React)     #
-  ############################
-  frontend:
-    build:
-      context: ../frontend
-      dockerfile: Dockerfile
-    container_name: spara-frontend
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: message_store
     ports:
-      - "5173:5173"
-    depends_on:
-      - message-service
-      - llm-service
+      - "5433:5432"
+    volumes:
+      - message_store_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  message_store_data:
+  # ############################
+  # #  1) Redis                #
+  # ############################
+  # redis:
+  #   image: redis:latest
+  #   container_name: spara-redis
+  #   ports:
+  #     - "6379:6379"
+
+  # ############################
+  # #  2) Message Service      #
+  # ############################
+  # message-service:
+  #   build:
+  #     context: ../message-service
+  #     dockerfile: Dockerfile
+  #   container_name: spara-message-service
+  #   depends_on:
+  #     - redis
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     REDIS_HOST: redis
+
+  # ############################
+  # #  3) LLM Service          #
+  # ############################
+  # llm-service:
+  #   build:
+  #     context: ../llm-service
+  #     dockerfile: Dockerfile
+  #   container_name: spara-llm-service
+  #   depends_on:
+  #     - redis
+  #   environment:
+  #     REDIS_HOST: redis
+
+  # ############################
+  # #  4) Frontend (React)     #
+  # ############################
+  # frontend:
+  #   build:
+  #     context: ../frontend
+  #     dockerfile: Dockerfile
+  #   container_name: spara-frontend
+  #   ports:
+  #     - "5173:5173"
+  #   depends_on:
+  #     - message-service
+  #     - llm-service
 
   ############################
   #  OLD CODE                #
