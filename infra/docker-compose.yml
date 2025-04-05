@@ -18,12 +18,15 @@ services:
     container_name: spara-message-service
     depends_on:
       - redis
+      - message_store
     ports:
       - "8000:8000"
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-
+      DATABASE_URL: postgresql://postgres:postgres@message_store:5432/message_store
+    env_file:
+      - ../message-service/.env
   ############################
   #  3) LLM Service          #
   ############################
@@ -50,6 +53,23 @@ services:
     depends_on:
       - message-service
       - llm-service
+
+############################
+  #  5) PostgreSQL DB        #
+  ############################
+  message_store:
+    image: postgres:15
+    container_name: spara-message-store
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: message_store
+    ports:
+      - "5432:5432"
+    volumes:
+      - ../message-service/init.sql:/docker-entrypoint-initdb.d/init.sql
+    
 
   ############################
   #  OLD CODE                #
