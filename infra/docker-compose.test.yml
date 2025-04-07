@@ -1,0 +1,13 @@
+services:
+  test_db:
+    image: postgres:15
+    container_name: spara-test-db
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_pass
+      POSTGRES_DB: test_db
+    ports:
+      - "5434:5432"  # So it doesn't conflict with your main DB on 5432
+    volumes:
+      - ../shared/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ../shared/db/test_data.sql:/docker-entrypoint-initdb.d/test_data.sql
