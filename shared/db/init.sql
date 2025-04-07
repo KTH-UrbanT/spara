@@ -1,10 +1,10 @@
--- init.sql
 CREATE TABLE IF NOT EXISTS users (
     user_id SERIAL PRIMARY KEY,
-    username VARCHAR(50) UNIQUE NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    username VARCHAR(50),
+    email VARCHAR(100),
+    password_hash VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_logged_in TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS messages (
     message_id SERIAL PRIMARY KEY,
     session_id INT REFERENCES sessions(session_id) ON DELETE CASCADE,
-    sender_id INT REFERENCES users(user_id) ON DELETE SET NULL,
+    role VARCHAR(50) NOT NULL, -- user or assistant or system
     content TEXT NOT NULL,
     sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

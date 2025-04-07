@@ -1,3 +1,4 @@
+name: spara
 services:
   ############################
   #  1) Redis                #
@@ -9,7 +10,23 @@ services:
       - "6379:6379"
 
   ############################
-  #  2) Message Service      #
+  #  2) PostgreSQL           #
+  ############################
+  message_store:
+    image: postgres:13
+    container_name: spara-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: message_store
+    volumes:
+      - message_store_data:/var/lib/postgresql/data
+      - ../shared/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  ############################
+  #  3) Message Service      #
   ############################
   message-service:
     build:
@@ -18,13 +35,14 @@ services:
     container_name: spara-message-service
     depends_on:
       - redis
+      - message_store
     ports:
       - "8000:8000"
-    environment:
-      REDIS_HOST: redis
+    env_file:
+      - ../message-service/.env
 
   ############################
-  #  3) LLM Service          #
+  #  4) LLM Service          #
   ############################
   llm-service:
     build:
@@ -37,18 +55,22 @@ services:
       REDIS_HOST: redis
 
   ############################
-  #  4) Frontend (React)     #
+  #  5) Frontend (React)     #
   ############################
   frontend:
     build:
       context: ../frontend
       dockerfile: Dockerfile
     container_name: spara-frontend
+    environment:
+      VITE_SOCKET_SERVER_URL: http://message-service:8000
     ports:
-      - "5173:80"
+      - "80:80"
     depends_on:
       - message-service
-      - llm-service
+
+volumes:
+  message_store_data:
 
   ############################
   #  OLD CODE                #
