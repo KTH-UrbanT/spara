@@ -61,9 +61,9 @@ services:
     build:
       context: ../frontend
       dockerfile: Dockerfile
+      args:
+        VITE_SOCKET_SERVER_URL: http://message-service:8000
     container_name: spara-frontend
-    environment:
-      VITE_SOCKET_SERVER_URL: http://message-service:8000
     ports:
       - "80:80"
     depends_on:
