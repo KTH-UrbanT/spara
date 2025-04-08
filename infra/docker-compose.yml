@@ -24,7 +24,6 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      DATABASE_URL: postgresql://postgres:postgres@message_store:5432/message_store
     env_file:
       - ../message-service/.env
   ############################
@@ -54,13 +53,12 @@ services:
       - message-service
       - llm-service
 
-############################
-  #  5) PostgreSQL DB        #
-  ############################
+   ############################
+   #  5) PostgreSQL DB        #
+   ############################
   message_store:
-    image: postgres:15
-    container_name: spara-message-store
-    restart: always
+    image: postgres:13
+    container_name: spara-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -68,9 +66,11 @@ services:
     ports:
       - "5432:5432"
     volumes:
+      - message_store_data:/var/lib/postgresql/data
       - ../message-service/init.sql:/docker-entrypoint-initdb.d/init.sql
     
-
+volumes:
+  message_store_data:
   ############################
   #  OLD CODE                #
   ############################
