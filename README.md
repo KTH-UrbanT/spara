@@ -37,7 +37,11 @@ docker-compose -f infra/docker-compose.prod.yml up --build -d
 - FastAPI server - `http://<server-ip>:8000`
 
 ## git modules pull 1st time 
+```
 git submodule update --init --recursive
+```
 
 ## git modules pull subsequent times
+```
 git submodule update --recursive --remote
+```
