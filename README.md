@@ -20,7 +20,7 @@ git clone --recursive git@github.com:KTH-UrbanT/spara.git
 Build and run the development environment:
 
 ```
-docker-compose -f infra/docker-compose.dev.yml up --build
+docker compose -f infra/docker-compose.dev.yml up --build
 ```
 
 ### Production
@@ -28,10 +28,17 @@ docker-compose -f infra/docker-compose.dev.yml up --build
 Build and run the production environment:
 
 ```
-docker-compose -f infra/docker-compose.prod.yml up --build -d
+docker compose -f infra/docker-compose.prod.yml up --build -d
 ```
 
-## Accessing the Services
+## Accessing the services
+
+### locally
+
+- ReactJS client - `http://localhost:5173`
+- FastAPI server - `http://localhost:8000`
+
+### remote
 
 - ReactJS client - `http://<server-ip>:5173`
 - FastAPI server - `http://<server-ip>:8000`
