@@ -20,7 +20,7 @@ git clone --recursive git@github.com:KTH-UrbanT/spara.git
 Build and run the development environment:
 
 ```
-docker-compose -f infra/docker-compose.yml up --build
+docker-compose -f infra/docker-compose.dev.yml up --build
 ```
 
 ### Production

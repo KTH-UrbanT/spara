@@ -1,4 +1,4 @@
-name: spara
+name: spara-dev
 services:
   ############################
   #  1) Redis                #
