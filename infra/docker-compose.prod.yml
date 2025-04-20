@@ -6,6 +6,8 @@ services:
   redis:
     image: redis:latest
     container_name: spara-redis
+    networks:
+      - spara_network
     ports:
       - "6379:6379"
 
@@ -15,6 +17,8 @@ services:
   message_store:
     image: postgres:13
     container_name: spara-postgres
+    networks:
+      - spara_network
     ports:
       - "5432:5432"
     environment:
@@ -33,6 +37,8 @@ services:
       context: ../message-service
       dockerfile: Dockerfile
     container_name: spara-message-service
+    networks:
+      - spara_network
     depends_on:
       - redis
       - message_store
@@ -49,6 +55,8 @@ services:
       context: ../llm-service
       dockerfile: Dockerfile
     container_name: spara-llm-service
+    networks:
+      - spara_network
     depends_on:
       - redis
     environment:
@@ -64,10 +72,17 @@ services:
       args:
         VITE_SOCKET_SERVER_URL: http://message-service:8000
     container_name: spara-frontend
+    restart: always
+    networks:
+      - spara_network
     ports:
-      - "80:80"
+      - "8800:80"
     depends_on:
       - message-service
 
 volumes:
   message_store_data:
+
+networks:
+  spara_network:
+    external: true
