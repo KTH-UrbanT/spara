@@ -70,7 +70,8 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
       args:
-        VITE_SOCKET_SERVER_URL: http://message-service:8000
+        MS_URL: https://test.sparabot.com:8000
+        MS_SOCKETIO_URL: wss://test.sparabot.com:8000
     container_name: spara-frontend
     restart: always
     networks:
