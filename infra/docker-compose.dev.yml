@@ -68,7 +68,8 @@ services:
       - ../frontend:/app
       - /app/node_modules
     environment:
-      - VITE_SOCKET_SERVER_URL=http://localhost:8000
+      - VITE_MS_URL=http://localhost:8000
+      - VITE_MS_SOCKETIO_URL=ws://localhost:8000
     depends_on:
       - message-service
 

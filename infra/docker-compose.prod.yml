@@ -20,7 +20,7 @@ services:
     networks:
       - spara_network
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -70,8 +70,8 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
       args:
-        MS_URL: https://test.sparabot.com
-        MS_SOCKETIO_URL: wss://test.sparabot.com
+        VITE_MS_URL: https://test.sparabot.com
+        VITE_MS_SOCKETIO_URL: wss://test.sparabot.com
     container_name: spara-frontend
     restart: always
     networks:
