@@ -6,6 +6,7 @@ services:
   redis:
     image: redis:latest
     container_name: spara-redis
+    restart: always
     networks:
       - spara_network
     ports:
@@ -17,6 +18,7 @@ services:
   message_store:
     image: postgres:13
     container_name: spara-postgres
+    restart: always
     networks:
       - spara_network
     ports:
@@ -37,6 +39,7 @@ services:
       context: ../message-service
       dockerfile: Dockerfile
     container_name: spara-message-service
+    restart: always
     networks:
       - spara_network
     depends_on:
@@ -55,12 +58,13 @@ services:
       context: ../llm-service
       dockerfile: Dockerfile
     container_name: spara-llm-service
+    restart: always
     networks:
       - spara_network
     depends_on:
       - redis
     environment:
-      REDIS_HOST: redis
+      REDIS_HOST: spara-redis
 
   ############################
   #  5) Frontend (React)     #
