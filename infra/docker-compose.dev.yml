@@ -47,7 +47,7 @@ services:
   llm-service:
     build:
       context: ../llm-service
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: spara-llm-service-dev
     depends_on:
       - redis
