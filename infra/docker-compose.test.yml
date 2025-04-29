@@ -1,28 +1,28 @@
-name: spara
+name: spara-test
 services:
   ############################
   #  1) Redis                #
   ############################
   redis:
     image: redis:latest
-    container_name: spara-redis
+    container_name: spara-redis-test
     restart: always
     networks:
-      - spara_network
+      - spara_test_network
     ports:
-      - "6379:6379"
+      - "6380:6379"
 
   ############################
   #  2) PostgreSQL           #
   ############################
   message_store:
     image: postgres:13
-    container_name: spara-postgres
+    container_name: spara-postgres-test
     restart: always
     networks:
-      - spara_network
+      - spara_test_network
     ports:
-      - "5433:5432"
+      - "5434:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -41,12 +41,12 @@ services:
     container_name: spara-message-service
     restart: always
     networks:
-      - spara_network
+      - spara_test_network
     depends_on:
       - redis
       - message_store
     ports:
-      - "8000:8000"
+      - "8001:8000"
     env_file:
       - ../message-service/.env
 
@@ -57,14 +57,14 @@ services:
     build:
       context: ../llm-service
       dockerfile: Dockerfile
-    container_name: spara-llm-service
+    container_name: spara-llm-service-test
     restart: always
     networks:
-      - spara_network
+      - spara_test_network
     depends_on:
       - redis
     environment:
-      REDIS_HOST: spara-redis
+      REDIS_HOST: spara-redis-test
 
   ############################
   #  5) Frontend (React)     #
@@ -74,14 +74,14 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
       args:
-        VITE_MS_URL: https://sparabot.com
-        VITE_MS_SOCKETIO_URL: wss://sparabot.com
-    container_name: spara-frontend
+        VITE_MS_URL: https://test.sparabot.com
+        VITE_MS_SOCKETIO_URL: wss://test.sparabot.com
+    container_name: spara-frontend-test
     restart: always
     networks:
-      - spara_network
+      - spara_test_network
     ports:
-      - "8800:80"
+      - "8808:80"
     depends_on:
       - message-service
 
@@ -89,5 +89,5 @@ volumes:
   message_store_data:
 
 networks:
-  spara_network:
+  spara_test_network:
     external: true
