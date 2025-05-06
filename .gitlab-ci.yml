@@ -1,46 +1,64 @@
 stages:
   - build
+  - test
   - deploy
 
 variables:
-  DOCKER_IMAGE: spara:latest
-  SSH_HOST: oden.abe.kth.se
-  SSH_USER: oleksii
-  DEPLOY_PATH: /spara
+  COMPOSE_FILE: infra/docker-compose.dev.yml
+  REMOTE_USER: ubuntu
+  REMOTE_HOST: 130.238.28.49
+  REMOTE_PATH: /home/ubuntu/sparaRemote/infra
+  REMOTE_PRIVATE_KEY: $SSH_MG_REMOTE
+  GITHUB_PRIVATE_KEY: $SSH_MG_PRIVATE_KEY
 
 before_script:
-  - mkdir -p ~/.ssh
-  - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-  - chmod 600 ~/.ssh/id_rsa
-  - ssh-keyscan -H $SSH_HOST >> ~/.ssh/known_hosts
+  # install needed CLIs
+  - apk add --no-cache git docker-compose openssh-client rsync
 
-build:
-  stage: build
+  # prepare SSH dir and keys
+  - mkdir -p ~/.ssh
+  - echo "$GITHUB_PRIVATE_KEY" > ~/.ssh/github_key
+  - chmod 600 ~/.ssh/github_key
+  - echo "$REMOTE_PRIVATE_KEY" > ~/.ssh/remote_key
+  - chmod 600 ~/.ssh/remote_key
+
+  # trust hosts
+  - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+  - ssh-keyscan -H $REMOTE_HOST >> ~/.ssh/known_hosts
+
+  # fetch submodules using the GitHub key
+  - |
+    GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" \
+      git submodule update --init --recursive
+
+  # inject .env files
+  - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
+  - echo "$LLM_SERVICE_ENV"      > llm-service/.env
+
+container_test:
+  stage: test
   image: docker:latest
   services:
     - docker:dind
   script:
-    # Build Docker image
-    - docker build -t $DOCKER_IMAGE .
+    - docker-compose -f $COMPOSE_FILE up -d --build
+    - docker-compose exec message-service bash -c "PYTHONPATH=/message-service pytest tests/"
+  only:
+    - /^test\/.*/
 
-deploy:
+deploy_to_remote:
   stage: deploy
+  image: docker:latest
   script:
-    # Push Docker image to the server (optional if server pulls image directly)
-    - |
-      ssh $SSH_USER@$SSH_HOST << EOF
-      mkdir -p $DEPLOY_PATH
-      EOF
+    # copy the infra/ folder to the remote
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
 
-    # Transfer docker-compose.yml or deployment files
-    - scp docker-compose.yml $SSH_USER@$SSH_HOST:$DEPLOY_PATH/
-
-    # Run Docker Compose on the server
-    - |
-      ssh $SSH_USER@$SSH_HOST << EOF
-      cd $DEPLOY_PATH
-      docker-compose pull
+    # ssh in (using the remote_key) and restart
+    - |  
+      ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF  
+      cd $REMOTE_PATH
       docker-compose up -d --build
       EOF
   only:
-    - main # Run deployment only on the main branch
+    - /^test\/.*/  
+
