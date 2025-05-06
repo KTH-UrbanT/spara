@@ -4,7 +4,7 @@ stages:
   - deploy
 
 variables:
-  COMPOSE_FILE: infra/docker-compose.dev.yml
+  COMPOSE_FILE: infra/docker-compose.test.yml
   REMOTE_USER: ubuntu
   REMOTE_HOST: 130.238.28.49
   REMOTE_PATH: /home/ubuntu/sparaRemote/infra
