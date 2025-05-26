@@ -50,6 +50,8 @@ deploy_staging:
   stage: deploy
   image: docker:latest
   script:
+    - echo "Deploy to staging server"
+
     # copy the infra/ folder to the remote
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
 
@@ -59,5 +61,8 @@ deploy_staging:
       cd $REMOTE_PATH
       docker-compose up -d --build
       EOF
+  environment:
+    name: staging
+    url: https://test.sparabot.com
   only:
     - /^test\/.*/
