@@ -13,7 +13,7 @@ variables:
 
 before_script:
   # install needed CLIs
-  - apk add --no-cache git docker-cli docker-compose-plugin openssh-client rsync
+  - apk add --no-cache git openssh-client rsync
 
   # prepare SSH dir and keys
   - mkdir -p ~/.ssh
@@ -37,7 +37,7 @@ before_script:
 
 container_test:
   stage: test
-  image: docker:latest
+  image: docker:24.0-cli
   services:
     - docker:dind
   script:
