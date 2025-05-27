@@ -13,7 +13,7 @@ variables:
 
 before_script:
   # install needed CLIs
-  - apk add --no-cache git docker-compose openssh-client rsync
+  - apk add --no-cache git docker-cli docker-compose-plugin openssh-client rsync
 
   # prepare SSH dir and keys
   - mkdir -p ~/.ssh
@@ -41,8 +41,8 @@ container_test:
   services:
     - docker:dind
   script:
-    - docker-compose -f $COMPOSE_FILE up -d --build
-    - docker-compose exec message-service bash -c "PYTHONPATH=/message-service pytest tests/"
+    - docker compose -f $COMPOSE_FILE up -d --build
+    - docker compose exec message-service bash -c "PYTHONPATH=/message-service pytest tests/"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: always
@@ -66,7 +66,14 @@ deploy_staging:
     - |
       ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<-EOF
         cd $REMOTE_PATH
-        docker-compose up -d --build
+
+        # check if docker compose is installed, if not, install it
+        if ! docker compose version &> /dev/null; then
+          echo "'docker compose' not found. Installing docker-compose-plugin..."
+          sudo apt update && sudo apt install -y docker-compose-plugin
+        fi
+
+        docker compose up -d --build
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
