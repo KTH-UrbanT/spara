@@ -33,7 +33,7 @@ before_script:
 
   # inject .env files
   - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
-  - echo "$LLM_SERVICE_ENV"      > llm-service/.env
+  - echo "$LLM_SERVICE_ENV"     > llm-service/.env
 
 container_test:
   stage: test
@@ -43,12 +43,16 @@ container_test:
   script:
     - docker-compose -f $COMPOSE_FILE up -d --build
     - docker-compose exec message-service bash -c "PYTHONPATH=/message-service pytest tests/"
-  only:
-    - /^test\/.*/
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+      when: always
 
 deploy_staging:
   stage: deploy
   image: docker:latest
+  environment:
+    name: staging
+    url: https://test.sparabot.com
   script:
     - echo "Deploy to staging server"
 
@@ -61,8 +65,6 @@ deploy_staging:
       cd $REMOTE_PATH
       docker-compose up -d --build
       EOF
-  environment:
-    name: staging
-    url: https://test.sparabot.com
-  only:
-    - /^test\/.*/
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+      when: always
