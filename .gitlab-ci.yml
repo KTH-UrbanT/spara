@@ -54,16 +54,19 @@ deploy_staging:
     name: staging
     url: https://test.sparabot.com
   script:
-    - echo "Deploy to staging server"
+    - echo "Deploying to staging server"
+
+    # ensure the remote directory exists
+    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
 
     # copy the infra/ folder to the remote
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
 
     # ssh in (using the remote_key) and restart
     - |
-      ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF  
-      cd $REMOTE_PATH
-      docker-compose up -d --build
+      ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<-EOF
+        cd $REMOTE_PATH
+        docker-compose up -d --build
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
