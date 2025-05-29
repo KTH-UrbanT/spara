@@ -49,6 +49,11 @@ services:
       - "8001:8000"
     env_file:
       - ../message-service/.env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   ############################
   #  4) LLM Service          #
@@ -90,4 +95,4 @@ volumes:
 
 networks:
   spara_test_network:
-    external: true
+    external: false
