@@ -52,8 +52,8 @@ container_test:
     - docker compose -f infra/$COMPOSE_FILE build --no-cache
     - docker compose -f infra/$COMPOSE_FILE up -d
     # Before running tests, we ensure that the test folders exist.
-    - docker compose exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
-    - docker compose exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
+    - docker compose -f infra/$COMPOSE_FILE exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
+    - docker compose -f infra/$COMPOSE_FILE exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: always
@@ -106,6 +106,8 @@ deploy_staging:
 
         docker compose version
         cd $REMOTE_PATH
+        # We need to target the correct compose file for deployment
+        # since not specifying it defaults to docker-compose.yml
         docker compose -f $COMPOSE_FILE up -d --build
       EOF
   rules:
