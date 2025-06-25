@@ -47,6 +47,7 @@ container_test:
   services:
     - docker:dind
   script:
+    # Use the no-cache option to ensure a fresh build of the containers.
     - docker compose -f $COMPOSE_FILE build --no-cache
     - docker compose -f $COMPOSE_FILE up -d
     # Before running tests, we ensure that the test folders exist.
