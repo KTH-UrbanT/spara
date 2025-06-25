@@ -1,5 +1,6 @@
+# We only need the stages test and deploy for this pipeline,
+# as building is done during testing and deployment.
 stages:
-  - build
   - test
   - deploy
 
@@ -11,6 +12,8 @@ variables:
   SSH_REMOTE_HOST_KEY: $SSH_STAGING_HOST_KEY
   SSH_GITHUB_PRIVATE_KEY: $SSH_MG_PRIVATE_KEY
 
+# The 'container_setup' job initializes the Git repository, installs necessary dependencies,
+# and prepares the environment for testing and deployment.
 before_script:
   # install needed CLIs
   - apk add --no-cache git openssh-client rsync
@@ -35,6 +38,9 @@ before_script:
   - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
   - echo "$LLM_SERVICE_ENV"     > llm-service/.env
 
+# The 'container_test' job builds and starts Docker containers using docker-compose,
+# then runs pytest-based unit tests inside both the message-service and llm-service containers.
+# It only runs for branches matching the pattern 'test/*'.
 container_test:
   stage: test
   image: docker:24.0-cli
@@ -43,10 +49,17 @@ container_test:
   script:
     - docker compose -f $COMPOSE_FILE up -d --build
     - docker compose exec message-service bash -c "PYTHONPATH=/message-service pytest tests/"
+    - docker compose exec llm-service bash -c "PYTHONPATH=/llm-service pytest tests/"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: always
 
+# Deploys the application to the staging environment.
+# This function typically handles building the application,
+# uploading artifacts, configuring environment variables,
+# and triggering deployment processes to a staging server.
+# It is used to test new features and changes in an environment
+# that closely resembles production before releasing to end users.
 deploy_staging:
   stage: deploy
   image: docker:latest
