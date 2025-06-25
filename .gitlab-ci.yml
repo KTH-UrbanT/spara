@@ -5,7 +5,8 @@ stages:
   - deploy
 
 variables:
-  COMPOSE_FILE: infra/docker-compose.test.yml
+  COMPOSE_FILE: docker-compose.test.yml
+  COMPOSE_FILE_DEPLOY: docker-compose.prod.yml
   REMOTE_USER: ubuntu
   REMOTE_HOST: $STAGING_HOST
   REMOTE_PATH: /home/ubuntu/spara/infra
@@ -48,8 +49,8 @@ container_test:
     - docker:dind
   script:
     # Use the no-cache option to ensure a fresh build of the containers.
-    - docker compose -f $COMPOSE_FILE build --no-cache
-    - docker compose -f $COMPOSE_FILE up -d
+    - docker compose -f infra/$COMPOSE_FILE build --no-cache
+    - docker compose -f infra/$COMPOSE_FILE up -d
     # Before running tests, we ensure that the test folders exist.
     - docker compose exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
     - docker compose exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
@@ -105,7 +106,7 @@ deploy_staging:
 
         docker compose version
         cd $REMOTE_PATH
-        docker compose up -d --build
+        docker compose -f $COMPOSE_FILE up -d --build
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
