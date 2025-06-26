@@ -35,6 +35,7 @@ services:
   #  3) Message Service      #
   ############################
   message-service:
+    image: message-service:test
     build:
       context: ../message-service
       dockerfile: Dockerfile
@@ -54,6 +55,7 @@ services:
   #  4) LLM Service          #
   ############################
   llm-service:
+    image: llm-service:test
     build:
       context: ../llm-service
       dockerfile: Dockerfile
@@ -70,6 +72,7 @@ services:
   #  5) Frontend (React)     #
   ############################
   frontend:
+    image: frontend:test
     build:
       context: ../frontend
       dockerfile: Dockerfile
