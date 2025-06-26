@@ -81,12 +81,8 @@ deploy_staging:
 
     # ssh in (using the remote_key) and restart
     - |
-      ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<"EOF"
+      ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
         set -e
-
-        # Ensure the environment variables are set
-        export REMOTE_PATH="$REMOTE_PATH"
-        export COMPOSE_FILE_TEST="$COMPOSE_FILE_TEST"
 
         # Install Docker if not installed
         if ! command -v docker &> /dev/null; then
