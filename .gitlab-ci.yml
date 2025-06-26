@@ -105,18 +105,21 @@ deploy_staging:
         fi
 
         docker compose version
-        
+
+        # Print folders
+        ls
+
         # Check if the directory exists, if not, exit with a message
         if [ ! -d "$REMOTE_PATH" ]; then
-          echo "Directory $REMOTE_PATH does not exist. Exiting..."
-          exit 1
+            echo -e "\033[0;33mDirectory $REMOTE_PATH does not exist. Exiting...\033[0m"
+            exit 1
         fi
 
         # CD into the remote path
         cd $REMOTE_PATH
         # Check if the compose file exists
         if [ ! -f "$COMPOSE_FILE_DEPLOY" ]; then
-          echo "Compose file $COMPOSE_FILE_DEPLOY does not exist. Exiting..."
+          echo -e "\033[0;33mCompose file $COMPOSE_FILE_DEPLOY does not exist. Exiting...\033[0m"
           exit 1
         fi
         
