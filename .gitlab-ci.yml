@@ -157,8 +157,8 @@ deploy_staging:
         cd $REMOTE_PATH/infra
         
         # We need to target the correct compose file for deployment
-        # since not specifying it defaults to docker-compose.yml
-        sudo docker compose -f $COMPOSE_FILE_TEST up -d --build
+        # Use the test compose file since we deploy the test version to staging
+        sudo docker compose -f $COMPOSE_FILE_TEST up -d
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
