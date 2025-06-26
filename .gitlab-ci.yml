@@ -9,7 +9,7 @@ variables:
   COMPOSE_FILE_DEPLOY: docker-compose.prod.yml
   REMOTE_USER: ubuntu
   REMOTE_HOST: $STAGING_HOST
-  REMOTE_PATH: /home/ubuntu/spara/infra
+  REMOTE_PATH: /home/ubuntu/spara
   SSH_REMOTE_HOST_KEY: $SSH_STAGING_HOST_KEY
   SSH_GITHUB_PRIVATE_KEY: $SSH_MG_PRIVATE_KEY
 
@@ -79,8 +79,8 @@ deploy_staging:
     # Stop and remove any running containers (only if compose file exists)
     - |
       ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
-        if [ -d "$REMOTE_PATH" ] && [ -f "$REMOTE_PATH/$COMPOSE_FILE_TEST" ]; then
-          cd $REMOTE_PATH
+        if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
+          cd $REMOTE_PATH/infra
           docker compose -f $COMPOSE_FILE_TEST down || true
         fi
       EOF
@@ -118,22 +118,8 @@ deploy_staging:
 
         docker compose version
 
-        # Print folders
-        ls
-
-        # Check if the directory exists, if not, exit with a message
-        if [ ! -d "$REMOTE_PATH" ]; then
-            echo -e "\033[0;33mDirectory $REMOTE_PATH does not exist. Exiting...\033[0m"
-            exit 1
-        fi
-
         # CD into the remote path
-        cd $REMOTE_PATH
-        # Check if the compose file exists
-        if [ ! -f "$COMPOSE_FILE_TEST" ]; then
-          echo -e "\033[0;33mCompose file $COMPOSE_FILE_TEST does not exist. Exiting...\033[0m"
-          exit 1
-        fi
+        cd $REMOTE_PATH/infra
         
         # We need to target the correct compose file for deployment
         # since not specifying it defaults to docker-compose.yml
