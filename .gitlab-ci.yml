@@ -77,13 +77,13 @@ deploy_staging:
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
 
     # Stop and remove any running containers (only if compose file exists)
-    #- |
-    #  ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
-    #    if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
-    #      cd $REMOTE_PATH/infra
-    #      docker compose -f $COMPOSE_FILE_TEST down || true
-    #    fi
-    #  EOF
+    - |
+      ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
+        if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
+          cd $REMOTE_PATH/infra
+          sudo docker compose -f $COMPOSE_FILE_TEST down || true
+        fi
+      EOF
 
     # Clean the deployment folder
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "rm -rf $REMOTE_PATH/*"
@@ -123,7 +123,7 @@ deploy_staging:
         
         # We need to target the correct compose file for deployment
         # since not specifying it defaults to docker-compose.yml
-        docker compose -f $COMPOSE_FILE_TEST up -d --build
+        sudo docker compose -f $COMPOSE_FILE_TEST up -d --build
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
