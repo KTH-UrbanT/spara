@@ -105,7 +105,21 @@ deploy_staging:
         fi
 
         docker compose version
+        
+        # Check if the directory exists, if not, exit with a message
+        if [ ! -d "$REMOTE_PATH" ]; then
+          echo "Directory $REMOTE_PATH does not exist. Exiting..."
+          exit 1
+        fi
+
+        # CD into the remote path
         cd $REMOTE_PATH
+        # Check if the compose file exists
+        if [ ! -f "$COMPOSE_FILE_DEPLOY" ]; then
+          echo "Compose file $COMPOSE_FILE_DEPLOY does not exist. Exiting..."
+          exit 1
+        fi
+        
         # We need to target the correct compose file for deployment
         # since not specifying it defaults to docker-compose.yml
         docker compose -f $COMPOSE_FILE_TEST up -d --build
