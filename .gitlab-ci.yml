@@ -5,7 +5,7 @@ stages:
   - deploy
 
 variables:
-  COMPOSE_FILE: docker-compose.test.yml
+  COMPOSE_FILE_TEST: docker-compose.test.yml
   COMPOSE_FILE_DEPLOY: docker-compose.prod.yml
   REMOTE_USER: ubuntu
   REMOTE_HOST: $STAGING_HOST
@@ -49,11 +49,11 @@ container_test:
     - docker:dind
   script:
     # Use the no-cache option to ensure a fresh build of the containers.
-    - docker compose -f infra/$COMPOSE_FILE build --no-cache
-    - docker compose -f infra/$COMPOSE_FILE up -d
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d
     # Before running tests, we ensure that the test folders exist.
-    - docker compose -f infra/$COMPOSE_FILE exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
-    - docker compose -f infra/$COMPOSE_FILE exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
+    - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
+    - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: always
@@ -104,11 +104,11 @@ deploy_staging:
           sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
         fi
 
-        docker-compose version
+        docker compose version
         cd $REMOTE_PATH
         # We need to target the correct compose file for deployment
         # since not specifying it defaults to docker-compose.yml
-        docker-compose -f $COMPOSE_FILE up -d --build
+        docker compose -f $COMPOSE_FILE_TEST up -d --build
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
