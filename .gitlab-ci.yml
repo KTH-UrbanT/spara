@@ -52,9 +52,6 @@ container_test:
     # Use the no-cache option to ensure a fresh build of the containers.
     - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache
     # After build, we store using artifacts for later stages.
-    - docker tag message-service message-service:test
-    - docker tag llm-service llm-service:test
-    - docker tag frontend frontend:test
     - docker save -o message-service.tar message-service:test
     - docker save -o llm-service.tar llm-service:test
     - docker save -o frontend.tar frontend:test
