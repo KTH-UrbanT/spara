@@ -104,11 +104,11 @@ deploy_staging:
           sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
         fi
 
-        docker compose version
+        docker-compose version
         cd $REMOTE_PATH
         # We need to target the correct compose file for deployment
         # since not specifying it defaults to docker-compose.yml
-        docker compose -f $COMPOSE_FILE up -d --build
+        docker-compose -f $COMPOSE_FILE up -d --build
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
