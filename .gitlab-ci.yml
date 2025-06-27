@@ -17,33 +17,28 @@ variables:
   SSH_REMOTE_HOST_KEY: $SSH_STAGING_HOST_KEY
   SSH_GITHUB_PRIVATE_KEY: $SSH_MG_PRIVATE_KEY
 
+before_script:
+  - apk add --no-cache git openssh-client rsync
+  # Restore SSH keys and permissions for jobs that need SSH
+  - mkdir -p ~/.ssh
+  - cp -r .ssh/* ~/.ssh/
+  - chmod 600 ~/.ssh/remote_key || true
+  - chmod 600 ~/.ssh/github_key || true
+  - ssh-keyscan -H github.com >> ~/.ssh/known_hosts || true
+  - ssh-keyscan -H $REMOTE_HOST >> ~/.ssh/known_hosts || true
+
 # Prepare the environment
 prepare_environment:
   stage: prepare
   image: alpine:latest
   script:
-    - apk add --no-cache git openssh-client rsync
-    # SSH keys
-    - mkdir -p ~/.ssh
-    - echo "$SSH_GITHUB_PRIVATE_KEY" > ~/.ssh/github_key
-    - chmod 600 ~/.ssh/github_key
-    - echo "$SSH_REMOTE_HOST_KEY" > ~/.ssh/remote_key
-    - chmod 600 ~/.ssh/remote_key
-    - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
-    - ssh-keyscan -H $REMOTE_HOST >> ~/.ssh/known_hosts
     # Submodules
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
-    # .env
-    - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
-    - echo "$LLM_SERVICE_ENV"     > llm-service/.env
   artifacts:
     paths:
       - message-service/
       - llm-service/
       - frontend/
-      - message-service/.env
-      - llm-service/.env
-      - ~/.ssh/
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -114,9 +109,9 @@ sync_staging:
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/llm-service"
     # Copy the infra folder to the remote server
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
-    # Copy .env files to the remote server
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
+    # Directly create the .env files on the remote server using SSH and environment variables
+    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "echo \"$MESSAGE_SERVICE_ENV\" > $REMOTE_PATH/message-service/.env"
+    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "echo \"$LLM_SERVICE_ENV\" > $REMOTE_PATH/llm-service/.env"
     # Copy the tarballs to the remote server
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service.tar llm-service.tar frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
   rules:
