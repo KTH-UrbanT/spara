@@ -39,6 +39,9 @@ prepare_environment:
   script:
     # Submodules
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
+    # inject .env files
+    - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
+    - echo "$LLM_SERVICE_ENV"     > llm-service/.env
   artifacts:
     paths:
       - message-service/
@@ -120,14 +123,13 @@ sync_staging:
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/llm-service"
     # Copy the infra folder to the remote server
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
-    # Directly create the .env files on the remote server using SSH and environment variables
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "echo \"$MESSAGE_SERVICE_ENV\" > $REMOTE_PATH/message-service/.env"
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "echo \"$LLM_SERVICE_ENV\" > $REMOTE_PATH/llm-service/.env"
+    # Copy .env files to the remote server
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
     # Copy the tarballs to the remote server
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service.tar llm-service.tar frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-      when: always
 
 # Prepares the remote server: stops/removes old containers and cleans up remote folders.
 prepare_staging:
@@ -152,7 +154,6 @@ prepare_staging:
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-      when: always
 
 # Deploys the application: installs Docker if needed, loads images, and starts containers.
 deploy_staging:
@@ -202,4 +203,3 @@ deploy_staging:
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-      when: always
