@@ -53,9 +53,7 @@ build_images:
     - prepare_environment
   script:
     - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache
-    - docker tag $(docker compose -f infra/$COMPOSE_FILE_TEST images -q message-service | tail -n 1) message-service:test
-    - docker tag $(docker compose -f infra/$COMPOSE_FILE_TEST images -q llm-service | tail -n 1) llm-service:test
-    - docker tag $(docker compose -f infra/$COMPOSE_FILE_TEST images -q frontend | tail -n 1) frontend:test
+
     - docker save -o message-service.tar message-service:test
     - docker save -o llm-service.tar llm-service:test
     - docker save -o frontend.tar frontend:test
@@ -90,11 +88,17 @@ test_llm_service:
   services:
     - docker:dind
   needs:
-    - build_images
+    - prepare_environment
   script:
-    - docker load -i llm-service.tar
+    - cd $REMOTE_PATH
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache llm-service
+    - docker save -o llm-service.tar llm-service:test
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
     - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
+  artifacts:
+    paths:
+      - llm-service.tar
+    expire_in: 1 hour
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
