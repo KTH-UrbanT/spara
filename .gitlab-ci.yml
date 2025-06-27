@@ -21,7 +21,6 @@ before_script:
   - apk add --no-cache git openssh-client rsync
   # Restore SSH keys and permissions for jobs that need SSH
   - mkdir -p ~/.ssh
-  - cp -r .ssh/* ~/.ssh/
   - chmod 600 ~/.ssh/remote_key || true
   - chmod 600 ~/.ssh/github_key || true
   - ssh-keyscan -H github.com >> ~/.ssh/known_hosts || true
@@ -46,6 +45,8 @@ prepare_environment:
 build_images:
   stage: build
   image: docker:24.0-cli
+  need: 
+    - prepare_environment
   services:
     - docker:dind
   script:
@@ -67,6 +68,8 @@ build_images:
 test_message_service:
   stage: test
   image: docker:24.0-cli
+  need:
+    - build_images
   services:
     - docker:dind
   script:
@@ -80,6 +83,8 @@ test_message_service:
 test_llm_service:
   stage: test
   image: docker:24.0-cli
+  need:
+    - build_images
   services:
     - docker:dind
   script:
