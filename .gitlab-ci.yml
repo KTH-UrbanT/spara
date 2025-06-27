@@ -45,7 +45,7 @@ prepare_environment:
 build_images:
   stage: build
   image: docker:24.0-cli
-  need: 
+  needs: 
     - prepare_environment
   services:
     - docker:dind
@@ -68,7 +68,7 @@ build_images:
 test_message_service:
   stage: test
   image: docker:24.0-cli
-  need:
+  needs:
     - build_images
   services:
     - docker:dind
@@ -83,7 +83,7 @@ test_message_service:
 test_llm_service:
   stage: test
   image: docker:24.0-cli
-  need:
+  needs:
     - build_images
   services:
     - docker:dind
