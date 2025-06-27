@@ -54,6 +54,10 @@ container_test:
   script:
     # Build all containers using the test compose file (no cache for clean builds)
     - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache
+    # Tag images with :test for later saving as artifacts
+    - docker tag $(docker compose -f infra/$COMPOSE_FILE_TEST images -q message-service) message-service:test
+    - docker tag $(docker compose -f infra/$COMPOSE_FILE_TEST images -q llm-service) llm-service:test
+    - docker tag $(docker compose -f infra/$COMPOSE_FILE_TEST images -q frontend) frontend:test
     # Start containers in detached mode for testing
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d
     # Run tests in message-service if tests directory exists
