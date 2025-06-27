@@ -38,8 +38,12 @@ prepare_environment:
     - echo "$LLM_SERVICE_ENV"     > llm-service/.env
   artifacts:
     paths:
+      - message-service/
+      - llm-service/
+      - frontend/
       - message-service/.env
       - llm-service/.env
+      - .ssh/
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
