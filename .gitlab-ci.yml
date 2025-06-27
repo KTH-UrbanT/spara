@@ -3,8 +3,9 @@
 # We only need the stages test and deploy for this pipeline,
 # as building is done during testing and deployment.
 stages:
-  - test
+  - prepare
   - build
+  - test
   - deploy
 
 variables:
@@ -18,7 +19,7 @@ variables:
 
 # Prepare the environment
 prepare_environment:
-  stage: test
+  stage: prepare
   image: alpine:latest
   script:
     - apk add --no-cache git openssh-client rsync
@@ -42,6 +43,31 @@ prepare_environment:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
+# Build images
+build_images:
+  stage: build
+  image: docker:24.0-cli
+  services:
+    - docker:dind
+  needs:
+    - prepare_environment
+  script:
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache
+    - docker tag $(docker compose -f infra/$COMPOSE_FILE_TEST images -q message-service | tail -n 1) message-service:test
+    - docker tag $(docker compose -f infra/$COMPOSE_FILE_TEST images -q llm-service | tail -n 1) llm-service:test
+    - docker tag $(docker compose -f infra/$COMPOSE_FILE_TEST images -q frontend | tail -n 1) frontend:test
+    - docker save -o message-service.tar message-service:test
+    - docker save -o llm-service.tar llm-service:test
+    - docker save -o frontend.tar frontend:test
+  artifacts:
+    paths:
+      - message-service.tar
+      - llm-service.tar
+      - frontend.tar
+    expire_in: 1 hour
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
 # Message Service test job
 test_message_service:
   stage: test
@@ -49,16 +75,11 @@ test_message_service:
   services:
     - docker:dind
   needs:
-    - prepare_environment
+    - build_images
   script:
-    - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache message-service
-    - docker save -o message-service.tar message-service:test
+    - docker load -i message-service.tar
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
     - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
-  artifacts:
-    paths:
-      - message-service.tar
-    expire_in: 1 hour
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -69,16 +90,11 @@ test_llm_service:
   services:
     - docker:dind
   needs:
-    - prepare_environment
+    - build_images
   script:
-    - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache llm-service
-    - docker save -o llm-service.tar llm-service:test
+    - docker load -i llm-service.tar
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
     - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
-  artifacts:
-    paths:
-      - llm-service.tar
-    expire_in: 1 hour
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
