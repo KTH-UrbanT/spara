@@ -32,6 +32,10 @@ before_script:
   - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
   - ssh-keyscan -H $REMOTE_HOST >> ~/.ssh/known_hosts
 
+  # inject .env files
+  - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
+  - echo "$LLM_SERVICE_ENV"     > llm-service/.env
+
 # Prepare the environment
 prepare_environment:
   stage: prepare
@@ -39,16 +43,11 @@ prepare_environment:
   script:
     # Submodules
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
-    # inject .env files
-    - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
-    - echo "$LLM_SERVICE_ENV"     > llm-service/.env
   artifacts:
     paths:
       - message-service/
       - llm-service/
       - frontend/
-      - message-service/.env
-      - llm-service/.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
