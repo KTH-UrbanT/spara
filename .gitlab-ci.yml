@@ -1,9 +1,7 @@
-git:
-  submodule_strategy: recursive
-
 # We only need the stages test and deploy for this pipeline,
 # as building is done during testing and deployment.
 stages:
+  - prepare
   - build
   - test
   - deploy
@@ -38,10 +36,40 @@ before_script:
   - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
   - echo "$LLM_SERVICE_ENV"     > llm-service/.env
 
+# Cleanup workspace
+cleanup_workspace:
+  stage: prepare
+  image: alpine:latest
+  script:
+    - echo "Cleaning up workspace"
+    - rm -rf message-service llm-service frontend
+    - rm -f message-service.tar llm-service.tar frontend.tar
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+# Prepare the environment
+prepare_environment:
+  stage: prepare
+  image: alpine:latest
+  needs:
+    - cleanup_workspace
+  script:
+    # Submodules
+    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
+  artifacts:
+    paths:
+      - message-service/
+      - llm-service/
+      - frontend/
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
 # Build images
 build_images:
   stage: build
   image: docker:24.0-cli
+  needs: 
+    - prepare_environment
   services:
     - docker:dind
   script:
