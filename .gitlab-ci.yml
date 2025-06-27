@@ -100,7 +100,7 @@ deploy_staging:
       EOF
 
     # Clean the deployment folder
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "rm -rf $REMOTE_PATH/*"
+    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
 
     # We copy the infra folder to the remote server
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
