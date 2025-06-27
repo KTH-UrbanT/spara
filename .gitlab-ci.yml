@@ -5,7 +5,6 @@
 stages:
   - test
   - build
-  - sync
   - deploy
 
 variables:
@@ -17,114 +16,75 @@ variables:
   SSH_REMOTE_HOST_KEY: $SSH_STAGING_HOST_KEY
   SSH_GITHUB_PRIVATE_KEY: $SSH_MG_PRIVATE_KEY
 
-# The 'container_setup' job initializes the Git repository, installs necessary dependencies,
-# and prepares the environment for testing and deployment.
-before_script:
-  # install needed CLIs
-  - apk add --no-cache git openssh-client rsync
+# Prepare the environment
+prepare_environment:
+  stage: test
+  image: alpine:latest
+  script:
+    - apk add --no-cache git openssh-client rsync
+    # SSH keys
+    - mkdir -p ~/.ssh
+    - echo "$SSH_GITHUB_PRIVATE_KEY" > ~/.ssh/github_key
+    - chmod 600 ~/.ssh/github_key
+    - echo "$SSH_REMOTE_HOST_KEY" > ~/.ssh/remote_key
+    - chmod 600 ~/.ssh/remote_key
+    - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+    - ssh-keyscan -H $REMOTE_HOST >> ~/.ssh/known_hosts
+    # Submodules
+    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
+    # .env
+    - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
+    - echo "$LLM_SERVICE_ENV"     > llm-service/.env
+  artifacts:
+    paths:
+      - message-service/.env
+      - llm-service/.env
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-  # prepare SSH dir and keys
-  - mkdir -p ~/.ssh
-  - echo "$SSH_GITHUB_PRIVATE_KEY" > ~/.ssh/github_key
-  - chmod 600 ~/.ssh/github_key
-  - echo "$SSH_REMOTE_HOST_KEY" > ~/.ssh/remote_key
-  - chmod 600 ~/.ssh/remote_key
-
-  # trust hosts
-  - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
-  - ssh-keyscan -H $REMOTE_HOST >> ~/.ssh/known_hosts
-
-  # fetch submodules using the GitHub key
-  - |
-    GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" \
-      git submodule update --init --recursive
-
-  # inject .env files
-  - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
-  - echo "$LLM_SERVICE_ENV"     > llm-service/.env
-
-# The 'container_test' job builds and starts Docker containers using docker-compose,
-# then runs pytest-based unit tests inside both the message-service and llm-service containers.
-# It only runs for branches matching the pattern 'test/*'.
-container_test:
+# Message Service test job
+test_message_service:
   stage: test
   image: docker:24.0-cli
   services:
     - docker:dind
   script:
-    # Build all containers using the test compose file (no cache for clean builds)
-    - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache
-    # Tag images with :test for later saving as artifacts
-    - docker tag $(docker compose -f infra/$COMPOSE_FILE_TEST images -q message-service) message-service:test
-    - docker tag $(docker compose -f infra/$COMPOSE_FILE_TEST images -q llm-service) llm-service:test
-    - docker tag $(docker compose -f infra/$COMPOSE_FILE_TEST images -q frontend) frontend:test
-    # Start containers in detached mode for testing
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d
-    # Run tests in message-service if tests directory exists
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache message-service
+    - docker save -o message-service.tar message-service:test
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
     - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
-    # Run tests in llm-service if tests directory exists
-    - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
-  # Artifacts are saved after the build and test for later stages
   artifacts:
     paths:
       - message-service.tar
-      - llm-service.tar
-      - frontend.tar
     expire_in: 1 hour
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-      when: always
 
-# The 'save_artifacts' job saves the built Docker images as tarballs for transfer and later deployment.
-save_artifacts:
-  stage: build
+# LLM Service test job
+test_llm_service:
+  stage: test
   image: docker:24.0-cli
   services:
     - docker:dind
   script:
-    # Save Docker images to tarballs for all services
-    - docker save -o message-service.tar message-service:test
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache llm-service
     - docker save -o llm-service.tar llm-service:test
-    - docker save -o frontend.tar frontend:test
-  dependencies:
-    - container_test
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
+    - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
   artifacts:
     paths:
-      - message-service.tar
       - llm-service.tar
-      - frontend.tar
     expire_in: 1 hour
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-      when: always
 
-# The 'sync_remote' job prepares the remote server and synchronizes all necessary files and artifacts.
-sync_remote:
-  stage: sync
-  image: docker:latest
-  script:
-    - echo "Syncing files to remote server"
-    # Ensure the base directory exists on the remote server
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
-    # Clean the deployment folder to avoid stale files
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
-    # Copy the infra folder to the remote server
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
-    # Ensure service directories exist for .env files
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service"
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/llm-service"
-    # Copy .env files for both services
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
-    # Copy Docker image tarballs to the remote server
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service.tar llm-service.tar frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
-  dependencies:
-    - save_artifacts
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-      when: always
 
-# The 'deploy_staging' job installs Docker if needed, loads images, and starts containers on the remote server.
+# Deploys the application to the staging environment.
+# This function typically handles building the application,
+# uploading artifacts, configuring environment variables,
+# and triggering deployment processes to a staging server.
+# It is used to test new features and changes in an environment
+# that closely resembles production before releasing to end users.
 deploy_staging:
   stage: deploy
   image: docker:latest
@@ -133,28 +93,65 @@ deploy_staging:
     url: https://test.sparabot.com
   script:
     - echo "Deploying to staging server"
-    # SSH into the remote server and perform deployment steps
+
+    # Ensure base directory exists
+    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
+
+    # Stop and remove any running containers (only if compose file exists)
+    - |
+      ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
+        if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
+          cd $REMOTE_PATH/infra
+          sudo docker compose -f $COMPOSE_FILE_TEST down || true
+        fi
+      EOF
+
+    # Clean the deployment folder
+    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
+
+    # We copy the infra folder to the remote server
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
+
+    # Make sure the directories for message-service and llm-service exist
+    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service"
+    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/llm-service"
+
+    # Copy .env files to the remote server
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
+
+    # We copy the tar balls created during the test stage
+    # to the remote server using rsync.
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service.tar llm-service.tar frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+
+    # ssh in (using the remote_key) and restart
     - |
       ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
         set -e
-        # Install Docker and Compose if not already present
+
+        # Install Docker if not installed
         if ! command -v docker &> /dev/null; then
           echo "Installing Docker and docker compose plugin..."
+
           sudo apt update
           sudo apt install -y ca-certificates curl gnupg lsb-release
+
           sudo install -m 0755 -d /etc/apt/keyrings
           curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
           sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
           echo \
             "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-            https://download.docker.com/linux/ubuntu \\$(lsb_release -cs) stable" | \
+            https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable" | \
             sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
           sudo apt update
           sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
         fi
-        # Show Docker Compose version for debugging
+
         docker compose version
-        # Load Docker images from tarballs if present
+
+        # Load images from tarballs
         if [ -f $REMOTE_PATH/message-service.tar ]; then
           sudo docker load -i $REMOTE_PATH/message-service.tar
         fi
@@ -164,13 +161,14 @@ deploy_staging:
         if [ -f $REMOTE_PATH/frontend.tar ]; then
           sudo docker load -i $REMOTE_PATH/frontend.tar
         fi
-        # Change directory to infra for compose up
+
+        # CD into the remote path
         cd $REMOTE_PATH/infra
-        # Start all services using the test compose file (staging uses test images)
+        
+        # We need to target the correct compose file for deployment
+        # Use the test compose file since we deploy the test version to staging
         sudo docker compose -f $COMPOSE_FILE_TEST up -d
       EOF
-  dependencies:
-    - sync_remote
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: always
