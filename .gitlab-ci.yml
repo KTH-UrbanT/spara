@@ -1,5 +1,3 @@
-# Test comment.
-
 # We only need the stages test and deploy for this pipeline,
 # as building is done during testing and deployment.
 stages:
@@ -17,14 +15,27 @@ variables:
   SSH_REMOTE_HOST_KEY: $SSH_STAGING_HOST_KEY
   SSH_GITHUB_PRIVATE_KEY: $SSH_MG_PRIVATE_KEY
 
+# The 'container_setup' job initializes the Git repository, installs necessary dependencies,
+# and prepares the environment for testing and deployment.
 before_script:
+  # install needed CLIs
   - apk add --no-cache git openssh-client rsync
-  # Restore SSH keys and permissions for jobs that need SSH
+
+  # prepare SSH dir and keys
   - mkdir -p ~/.ssh
-  - chmod 600 ~/.ssh/remote_key || true
-  - chmod 600 ~/.ssh/github_key || true
-  - ssh-keyscan -H github.com >> ~/.ssh/known_hosts || true
-  - ssh-keyscan -H $REMOTE_HOST >> ~/.ssh/known_hosts || true
+  - echo "$SSH_GITHUB_PRIVATE_KEY" > ~/.ssh/github_key
+  - chmod 600 ~/.ssh/github_key
+  - echo "$SSH_REMOTE_HOST_KEY" > ~/.ssh/remote_key
+  - chmod 600 ~/.ssh/remote_key
+
+  # trust hosts
+  - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+  - ssh-keyscan -H $REMOTE_HOST >> ~/.ssh/known_hosts
+
+  # fetch submodules using the GitHub key
+  - |
+    GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" \
+      git submodule update --init --recursive
 
 # Prepare the environment
 prepare_environment:
