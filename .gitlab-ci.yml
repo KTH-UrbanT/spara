@@ -47,6 +47,8 @@ prepare_environment:
       - message-service/
       - llm-service/
       - frontend/
+      - message-service/.env
+      - llm-service/.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
