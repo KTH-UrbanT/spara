@@ -86,13 +86,9 @@ test_llm_service:
   services:
     - docker:dind
   script:
-    - docker save -o llm-service.tar llm-service:test
+    - docker load -i llm-service.tar
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
     - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
-  artifacts:
-    paths:
-      - llm-service.tar
-    expire_in: 1 hour
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
