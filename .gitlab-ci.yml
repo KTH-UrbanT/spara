@@ -72,8 +72,6 @@ test_message_service:
   image: docker:24.0-cli
   services:
     - docker:dind
-  needs:
-    - build_images
   script:
     - docker load -i message-service.tar
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
@@ -87,11 +85,7 @@ test_llm_service:
   image: docker:24.0-cli
   services:
     - docker:dind
-  needs:
-    - prepare_environment
   script:
-    - cd $REMOTE_PATH
-    - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache llm-service
     - docker save -o llm-service.tar llm-service:test
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
     - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
