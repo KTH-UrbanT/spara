@@ -50,7 +50,6 @@ build_images:
   services:
     - docker:dind
   script:
-    - pwd
     - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache
 
     - docker save -o message-service.tar message-service:test
@@ -72,8 +71,6 @@ test_message_service:
   services:
     - docker:dind
   script:
-    - pwd
-    - cd $REMOTE_PATH
     - docker load -i message-service.tar
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
     - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
