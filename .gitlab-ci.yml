@@ -1,7 +1,6 @@
 # We only need the stages test and deploy for this pipeline,
 # as building is done during testing and deployment.
 stages:
-  - prepare
   - build
   - test
   - deploy
@@ -14,6 +13,9 @@ variables:
   REMOTE_PATH: /home/ubuntu/spara
   SSH_REMOTE_HOST_KEY: $SSH_STAGING_HOST_KEY
   SSH_GITHUB_PRIVATE_KEY: $SSH_MG_PRIVATE_KEY
+
+git:
+  submodule_strategy: recursive
 
 # The 'container_setup' job initializes the Git repository, installs necessary dependencies,
 # and prepares the environment for testing and deployment.
@@ -36,27 +38,10 @@ before_script:
   - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
   - echo "$LLM_SERVICE_ENV"     > llm-service/.env
 
-# Prepare the environment
-prepare_environment:
-  stage: prepare
-  image: alpine:latest
-  script:
-    # Submodules
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
-  artifacts:
-    paths:
-      - message-service/
-      - llm-service/
-      - frontend/
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
 # Build images
 build_images:
   stage: build
   image: docker:24.0-cli
-  needs: 
-    - prepare_environment
   services:
     - docker:dind
   script:
