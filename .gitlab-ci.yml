@@ -95,13 +95,8 @@ test_llm_service:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 
-# Deploys the application to the staging environment.
-# This function typically handles building the application,
-# uploading artifacts, configuring environment variables,
-# and triggering deployment processes to a staging server.
-# It is used to test new features and changes in an environment
-# that closely resembles production before releasing to end users.
-deploy_staging:
+# Syncs files, .envs, and tarballs to the remote server and ensures directories exist.
+sync_staging:
   needs:
     - test_message_service
     - test_llm_service
@@ -111,11 +106,34 @@ deploy_staging:
     name: staging
     url: https://test.sparabot.com
   script:
-    - echo "Deploying to staging server"
-
+    - echo "Syncing files to remote server"
     # Ensure base directory exists
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
+    # Make sure the directories for message-service and llm-service exist
+    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service"
+    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/llm-service"
+    # Copy the infra folder to the remote server
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
+    # Copy .env files to the remote server
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
+    # Copy the tarballs to the remote server
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service.tar llm-service.tar frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+      when: always
 
+# Prepares the remote server: stops/removes old containers and cleans up remote folders.
+prepare_staging:
+  needs:
+    - sync_staging
+  stage: deploy
+  image: docker:latest
+  environment:
+    name: staging
+    url: https://test.sparabot.com
+  script:
+    - echo "Preparing remote server for deployment"
     # Stop and remove any running containers (only if compose file exists)
     - |
       ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
@@ -124,53 +142,44 @@ deploy_staging:
           sudo docker compose -f $COMPOSE_FILE_TEST down || true
         fi
       EOF
-
     # Clean the deployment folder
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+      when: always
 
-    # We copy the infra folder to the remote server
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
-
-    # Make sure the directories for message-service and llm-service exist
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service"
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/llm-service"
-
-    # Copy .env files to the remote server
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
-
-    # We copy the tar balls created during the test stage
-    # to the remote server using rsync.
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service.tar llm-service.tar frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
-
-    # ssh in (using the remote_key) and restart
+# Deploys the application: installs Docker if needed, loads images, and starts containers.
+deploy_staging:
+  needs:
+    - prepare_staging
+  stage: deploy
+  image: docker:latest
+  environment:
+    name: staging
+    url: https://test.sparabot.com
+  script:
+    - echo "Deploying to staging server"
+    # Install Docker if not installed, load images, and start containers
     - |
       ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
         set -e
-
-        # Install Docker if not installed
+        # Install Docker and Compose if not already present
         if ! command -v docker &> /dev/null; then
           echo "Installing Docker and docker compose plugin..."
-
           sudo apt update
           sudo apt install -y ca-certificates curl gnupg lsb-release
-
           sudo install -m 0755 -d /etc/apt/keyrings
           curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
           sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
           echo \
             "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-            https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable" | \
+            https://download.docker.com/linux/ubuntu \\$(lsb_release -cs) stable" | \
             sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
           sudo apt update
           sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
         fi
-
         docker compose version
-
-        # Load images from tarballs
+        # Load Docker images from tarballs
         if [ -f $REMOTE_PATH/message-service.tar ]; then
           sudo docker load -i $REMOTE_PATH/message-service.tar
         fi
@@ -180,12 +189,9 @@ deploy_staging:
         if [ -f $REMOTE_PATH/frontend.tar ]; then
           sudo docker load -i $REMOTE_PATH/frontend.tar
         fi
-
         # CD into the remote path
         cd $REMOTE_PATH/infra
-        
-        # We need to target the correct compose file for deployment
-        # Use the test compose file since we deploy the test version to staging
+        # Start all services using the test compose file (staging uses test images)
         sudo docker compose -f $COMPOSE_FILE_TEST up -d
       EOF
   rules:
