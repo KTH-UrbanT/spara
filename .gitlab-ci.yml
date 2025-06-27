@@ -43,7 +43,7 @@ prepare_environment:
       - frontend/
       - message-service/.env
       - llm-service/.env
-      - .ssh/
+      - ~/.ssh/
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -88,7 +88,6 @@ test_llm_service:
   services:
     - docker:dind
   script:
-    - cd $REMOTE_PATH
     - docker load -i llm-service.tar
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
     - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
@@ -103,6 +102,9 @@ test_llm_service:
 # It is used to test new features and changes in an environment
 # that closely resembles production before releasing to end users.
 deploy_staging:
+  needs:
+    - test_message_service
+    - test_llm_service
   stage: deploy
   image: docker:latest
   environment:
