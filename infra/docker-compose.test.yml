@@ -84,7 +84,7 @@ services:
     networks:
       - spara_test_network
     ports:
-      - "80:80"
+      - "8808:80"
     depends_on:
       - message-service
 
@@ -93,4 +93,4 @@ volumes:
 
 networks:
   spara_test_network:
-    external: false
+    external: true
