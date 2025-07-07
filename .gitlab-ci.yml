@@ -54,6 +54,8 @@ prepare_environment:
   needs:
     - cleanup_workspace
   script:
+    # Clean any existing submodule directories first
+    - rm -rf message-service llm-service frontend
     # Submodules
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
   artifacts:
