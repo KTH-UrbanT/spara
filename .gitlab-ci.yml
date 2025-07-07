@@ -9,7 +9,6 @@ stages:
 variables:
   COMPOSE_FILE_TEST: docker-compose.test.yml
   COMPOSE_FILE_TEST_CI: docker-compose.test.ci.yml
-  COMPOSE_FILE_DEPLOY: docker-compose.prod.yml
   REMOTE_USER: ubuntu
   REMOTE_HOST: $STAGING_HOST
   REMOTE_PATH: /home/ubuntu/spara
@@ -76,7 +75,7 @@ build_images:
   services:
     - docker:dind
   script:
-    - docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI build --no-cache
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache
 
     - docker save -o message-service.tar message-service:test
     - docker save -o llm-service.tar llm-service:test
@@ -100,8 +99,8 @@ test_message_service:
     - docker:dind
   script:
     - docker load -i message-service.tar
-    - docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI up -d message-service
-    - docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
+    - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -115,8 +114,8 @@ test_llm_service:
     - docker:dind
   script:
     - docker load -i llm-service.tar
-    - docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI up -d llm-service
-    - docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
+    - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -124,8 +123,6 @@ test_llm_service:
 # Syncs files, .envs, and tarballs to the remote server and ensures directories exist.
 sync_staging:
   needs:
-    # We need the built images to be available for deployment
-    - build_images 
     # We need the test jobs to run before deployment
     - test_message_service
     - test_llm_service
@@ -156,8 +153,10 @@ sync_staging:
     # Copy .env files to the remote server
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
-    # Copy the tarballs to the remote server
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service.tar llm-service.tar frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+    # Copy the source code to the remote server for building production images
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" frontend/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/frontend/
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -172,7 +171,7 @@ deploy_staging:
     url: https://test.sparabot.com
   script:
     - echo "Deploying to staging server"
-    # Install Docker if not installed, load images, and start containers
+    # Install Docker if not installed, build production images, and start containers
     - |
       ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
         set -e
@@ -192,19 +191,10 @@ deploy_staging:
           sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
         fi
         docker compose version
-        # Load Docker images from tarballs
-        if [ -f $REMOTE_PATH/message-service.tar ]; then
-          sudo docker load -i $REMOTE_PATH/message-service.tar
-        fi
-        if [ -f $REMOTE_PATH/llm-service.tar ]; then
-          sudo docker load -i $REMOTE_PATH/llm-service.tar
-        fi
-        if [ -f $REMOTE_PATH/frontend.tar ]; then
-          sudo docker load -i $REMOTE_PATH/frontend.tar
-        fi
         # CD into the remote path
         cd $REMOTE_PATH/infra
-        # Start all services using the test compose file (staging uses test images)
+        # Build and start services with CI overlay for remote deployment
+        sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI build --no-cache
         sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d
       EOF
   rules:
