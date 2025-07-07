@@ -8,6 +8,7 @@ stages:
 
 variables:
   COMPOSE_FILE_TEST: docker-compose.test.yml
+  COMPOSE_FILE_TEST_CI: docker-compose.test.ci.yml
   COMPOSE_FILE_DEPLOY: docker-compose.prod.yml
   REMOTE_USER: ubuntu
   REMOTE_HOST: $STAGING_HOST
@@ -75,7 +76,7 @@ build_images:
   services:
     - docker:dind
   script:
-    - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache
+    - docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI build --no-cache
 
     - docker save -o message-service.tar message-service:test
     - docker save -o llm-service.tar llm-service:test
@@ -99,8 +100,8 @@ test_message_service:
     - docker:dind
   script:
     - docker load -i message-service.tar
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
-    - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
+    - docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI up -d message-service
+    - docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -114,8 +115,8 @@ test_llm_service:
     - docker:dind
   script:
     - docker load -i llm-service.tar
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
-    - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
+    - docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI up -d llm-service
+    - docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -140,7 +141,7 @@ sync_staging:
       ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
         if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
           cd $REMOTE_PATH/infra
-          sudo docker compose -f $COMPOSE_FILE_TEST down || true
+          sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true
         fi
       EOF
     # Clean the deployment folder
@@ -204,7 +205,7 @@ deploy_staging:
         # CD into the remote path
         cd $REMOTE_PATH/infra
         # Start all services using the test compose file (staging uses test images)
-        sudo docker compose -f $COMPOSE_FILE_TEST up -d
+        sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
