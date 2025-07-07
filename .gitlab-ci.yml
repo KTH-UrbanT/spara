@@ -151,8 +151,8 @@ sync_staging:
     # Copy the infra folder to the remote server
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
     # Copy .env files to the remote server
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
+    # - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
+    # - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
     # Copy the source code to the remote server for building production images
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/
