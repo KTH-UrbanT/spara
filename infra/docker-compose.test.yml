@@ -77,8 +77,8 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
       args:
-        VITE_MS_URL: https://test.sparabot.com
-        VITE_MS_SOCKETIO_URL: wss://test.sparabot.com
+        VITE_MS_URL: ""  # Empty - let nginx handle routing
+        VITE_MS_SOCKETIO_URL: ""  # Empty - let nginx handle routing
     container_name: spara-frontend-test
     restart: always
     networks:

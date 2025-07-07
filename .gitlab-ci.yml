@@ -54,6 +54,8 @@ prepare_environment:
   needs:
     - cleanup_workspace
   script:
+    # Clean any existing submodule directories first
+    - rm -rf message-service llm-service frontend
     # Submodules
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
   artifacts:
@@ -121,6 +123,9 @@ test_llm_service:
 # Syncs files, .envs, and tarballs to the remote server and ensures directories exist.
 sync_staging:
   needs:
+    # We need the built images to be available for deployment
+    - build_images 
+    # We need the test jobs to run before deployment
     - test_message_service
     - test_llm_service
   stage: deploy
@@ -129,7 +134,17 @@ sync_staging:
     name: staging
     url: https://test.sparabot.com
   script:
-    - echo "Syncing files to remote server"
+    - echo "Preparing and syncing files to remote server"
+    # Stop and remove any running containers (only if compose file exists)
+    - |
+      ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
+        if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
+          cd $REMOTE_PATH/infra
+          sudo docker compose -f $COMPOSE_FILE_TEST down || true
+        fi
+      EOF
+    # Clean the deployment folder
+    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
     # Ensure base directory exists
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
     # Make sure the directories for message-service and llm-service exist
@@ -145,34 +160,10 @@ sync_staging:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Prepares the remote server: stops/removes old containers and cleans up remote folders.
-prepare_staging:
-  needs:
-    - sync_staging
-  stage: deploy
-  image: docker:latest
-  environment:
-    name: staging
-    url: https://test.sparabot.com
-  script:
-    - echo "Preparing remote server for deployment"
-    # Stop and remove any running containers (only if compose file exists)
-    - |
-      ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
-        if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
-          cd $REMOTE_PATH/infra
-          sudo docker compose -f $COMPOSE_FILE_TEST down || true
-        fi
-      EOF
-    # Clean the deployment folder
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
 # Deploys the application: installs Docker if needed, loads images, and starts containers.
 deploy_staging:
   needs:
-    - prepare_staging
+    - sync_staging
   stage: deploy
   image: docker:latest
   environment:
