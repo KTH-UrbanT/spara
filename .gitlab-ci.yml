@@ -123,6 +123,9 @@ test_llm_service:
 # Syncs files, .envs, and tarballs to the remote server and ensures directories exist.
 sync_staging:
   needs:
+    # We need the built images to be available for deployment
+    - build_images 
+    # We need the test jobs to run before deployment
     - test_message_service
     - test_llm_service
   stage: deploy
