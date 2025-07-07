@@ -93,5 +93,5 @@ volumes:
 
 networks:
   spara_test_network:
-    external: true
+    external: false
 
