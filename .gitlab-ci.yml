@@ -36,26 +36,14 @@ before_script:
   - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
   - echo "$LLM_SERVICE_ENV"     > llm-service/.env
 
-# Cleanup workspace
-cleanup_workspace:
-  stage: prepare
-  image: alpine:latest
-  script:
-    - echo "Cleaning up workspace"
-    - rm -rf message-service llm-service frontend
-    - rm -f message-service.tar llm-service.tar frontend.tar
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
 # Prepare the environment
 prepare_environment:
   stage: prepare
   image: alpine:latest
-  needs:
-    - cleanup_workspace
   script:
     # Clean any existing submodule directories first
     - rm -rf message-service llm-service frontend
+    - rm -f message-service.tar llm-service.tar frontend.tar
     # Submodules
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
   artifacts:
@@ -194,8 +182,8 @@ deploy_staging:
         # CD into the remote path
         cd $REMOTE_PATH/infra
         # Build and start services with CI overlay for remote deployment
-        sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI build --no-cache
-        sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d
+        sudo docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI build --no-cache
+        sudo docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI up -d
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
