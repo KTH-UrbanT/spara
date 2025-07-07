@@ -136,6 +136,7 @@ sync_staging:
     # Make sure the directories for message-service and llm-service exist
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service"
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/llm-service"
+    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/frontend"
     # Copy the infra folder to the remote server
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
     # Copy .env files to the remote server
@@ -182,8 +183,8 @@ deploy_staging:
         # CD into the remote path
         cd $REMOTE_PATH/infra
         # Build and start services with CI overlay for remote deployment
-        sudo docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI build --no-cache
-        sudo docker compose -f infra/$COMPOSE_FILE_TEST -f infra/$COMPOSE_FILE_TEST_CI up -d
+        sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI build --no-cache
+        sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'

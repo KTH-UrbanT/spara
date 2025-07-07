@@ -2,6 +2,5 @@
 # comparatbility with GitLab CI/CD
 networks:
   spara_test_network:
-    external: false
+    external: true
 
-    
