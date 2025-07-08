@@ -39,7 +39,7 @@ before_script:
 # Prepare the environment
 prepare_environment:
   stage: prepare
-  image: alpine:latest
+  image: alpine/git:latest
   script:
     # Clean any existing submodule directories first
     - rm -rf message-service llm-service frontend
@@ -137,10 +137,13 @@ sync_staging:
     - test_llm_service
     - test_frontend
   stage: deploy
-  image: docker:latest
+  image: alpine:latest
   environment:
     name: staging
     url: https://test.sparabot.com
+  before_script:
+    # install needed CLIs (fewer packages needed)
+    - apk add --no-cache openssh-client rsync
   script:
     - echo "Preparing and syncing files to remote server"
     # Stop and remove any running containers (only if compose file exists)
@@ -157,10 +160,10 @@ sync_staging:
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
     # Copy the infra folder to the remote server
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
-    # Copy the source code to the remote server for building production images
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" frontend/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/frontend/
+    # Copy the tested Docker images (tar files) to the remote server
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -175,7 +178,7 @@ deploy_staging:
     url: https://test.sparabot.com
   script:
     - echo "Deploying to staging server"
-    # Install Docker if not installed, build production images, and start containers
+    # Install Docker if not installed, load tested images, and start containers
     - |
       ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
         set -e
@@ -196,9 +199,13 @@ deploy_staging:
         fi
         docker compose version
         # CD into the remote path
-        cd $REMOTE_PATH/infra
-        # Build and start services with CI overlay for remote deployment
-        sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI build --no-cache
+        cd $REMOTE_PATH
+        # Load the tested Docker images from tar files
+        sudo docker load -i message-service.tar
+        sudo docker load -i llm-service.tar
+        sudo docker load -i frontend.tar
+        # Start services with CI overlay using the loaded images
+        cd infra
         sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d
       EOF
   rules:
