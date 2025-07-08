@@ -68,24 +68,8 @@ build_images:
     - prepare_environment
   services:
     - docker:dind
-  variables:
-    DOCKER_DRIVER: overlay2
-    DOCKER_BUILDKIT: 1
-    COMPOSE_DOCKER_CLI_BUILD: 1
-  before_script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
     - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache
-    - |
-      # Tag images for registry caching
-      docker tag message-service:test $CI_REGISTRY_IMAGE/message-service:$CI_COMMIT_SHA
-      docker tag llm-service:test $CI_REGISTRY_IMAGE/llm-service:$CI_COMMIT_SHA
-      docker tag frontend:test $CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHA
-      
-      # Push to registry for layer caching
-      docker push $CI_REGISTRY_IMAGE/message-service:$CI_COMMIT_SHA
-      docker push $CI_REGISTRY_IMAGE/llm-service:$CI_COMMIT_SHA
-      docker push $CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHA
 
     - docker save -o message-service.tar message-service:test
     - docker save -o llm-service.tar llm-service:test
