@@ -44,8 +44,11 @@ prepare_environment:
     # Clean any existing submodule directories first
     - rm -rf message-service llm-service frontend
     - rm -f message-service.tar llm-service.tar frontend.tar
-    # Submodules
+    # Get submodules
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
+    # Lock submodule SHAs for the test branch
+    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git add message-service llm-service frontend
+    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git commit -m "Lock submodule SHAs for test branch" || echo "No changes to commit"
   artifacts:
     paths:
       - message-service/
@@ -68,12 +71,27 @@ build_images:
     - docker save -o message-service.tar message-service:test
     - docker save -o llm-service.tar llm-service:test
     - docker save -o frontend.tar frontend:test
+  after_script:
+    # Clean up Docker images from the runner
+    - docker image prune -f || true
+    - docker container prune -f || true
   artifacts:
     paths:
       - message-service.tar
       - llm-service.tar
       - frontend.tar
-    expire_in: 1 hour
+    expire_in: 24 hour
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+# Frontend test job
+test_frontend:
+  stage: test
+  image: docker:24.0-cli
+  needs:
+    - build_images
+  script:
+    - echo "Frontend tests placeholder"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -133,15 +151,8 @@ sync_staging:
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
     # Ensure base directory exists
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
-    # Make sure the directories for message-service and llm-service exist
-    # - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service"
-    # - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/llm-service"
-    # - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/frontend"
     # Copy the infra folder to the remote server
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
-    # Copy .env files to the remote server
-    # - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
-    # - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
     # Copy the source code to the remote server for building production images
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/
