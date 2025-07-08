@@ -68,6 +68,9 @@ build_images:
     - prepare_environment
   services:
     - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
   script:
     - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache
 
@@ -93,6 +96,9 @@ test_frontend:
   image: docker:24.0-cli
   needs:
     - build_images
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
   script:
     - echo "Frontend tests placeholder"
   rules:
@@ -106,6 +112,9 @@ test_message_service:
     - build_images
   services:
     - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
   script:
     - docker load -i message-service.tar
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
@@ -121,6 +130,9 @@ test_llm_service:
     - build_images
   services:
     - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
   script:
     - docker load -i llm-service.tar
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
@@ -174,6 +186,9 @@ deploy_staging:
   environment:
     name: staging
     url: https://test.sparabot.com
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
   script:
     - echo "Deploying to staging server"
     # Install Docker if not installed, load tested images, and start containers
