@@ -72,7 +72,7 @@ build_images:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
-    - docker compose -f infra/$COMPOSE_FILE_TEST build --no-cache
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache
 
     - docker save -o message-service.tar message-service:test
     - docker save -o llm-service.tar llm-service:test
@@ -170,6 +170,9 @@ sync_staging:
     - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
     # Copy the infra folder to the remote server
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
+    # Copy submodule directories with .env files
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
+    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
     # Copy the tested Docker images (tar files) to the remote server
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
     - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
