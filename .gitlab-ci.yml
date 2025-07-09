@@ -228,3 +228,18 @@ deploy_staging:
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+# Get the latest dev branch of each submodule for the dev
+# branch of the assembly repository and commit this.
+update_submodules_dev:
+  image: alpine:latest
+  script:
+    # Get submodules
+    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule foreach 'git checkout dev && git pull origin dev'
+    # Add each submodule folder
+    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git add message-service llm-service frontend
+    # Commit the changes
+    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git commit -m "Update submodules to latest dev branch" || echo "No changes to commit"
+  rules:
+    - when: manual
+      allow_failure: true
