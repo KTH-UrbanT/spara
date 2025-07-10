@@ -67,8 +67,6 @@ build_images:
   before_script: [] # Disable default before_script
   needs: 
     - prepare_environment
-    - lint_python
-    - lint_javascript
   services:
     - docker:dind
   variables:
