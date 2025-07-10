@@ -64,7 +64,6 @@ prepare_environment:
 build_images:
   stage: build
   image: docker:24.0-cli
-  before_script: [] # Disable default before_script
   needs: 
     - prepare_environment
   services:
@@ -95,7 +94,6 @@ build_images:
 test_frontend:
   stage: test
   image: docker:24.0-cli
-  before_script: [] # Disable default before_script
   needs:
     - build_images
   variables:
@@ -110,7 +108,6 @@ test_frontend:
 test_message_service:
   stage: test
   image: docker:24.0-cli
-  before_script: [] # Disable default before_script
   needs:
     - build_images
   services:
@@ -129,7 +126,6 @@ test_message_service:
 test_llm_service:
   stage: test
   image: docker:24.0-cli
-  before_script: [] # Disable default before_script
   needs:
     - build_images
   services:
