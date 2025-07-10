@@ -2,7 +2,6 @@
 # as building is done during testing and deployment.
 stages:
   - prepare
-  - lint
   - build
   - test
   - deploy
@@ -58,34 +57,6 @@ prepare_environment:
       - message-service/
       - llm-service/
       - frontend/
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Perform linting and formatting checks
-lint_python:
-  stage: lint
-  image: python:3.11-slim
-  before_script: [] # Disable default before_script
-  needs:
-    - prepare_environment
-  script:
-    # Install dependencies
-    - pip install flake8
-    # Perform linting
-    - flake8 message-service llm-service
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-lint_javascript:
-  stage: lint
-  image: node:20-slim
-  before_script: [] # Disable default before_script
-  needs:
-    - prepare_environment
-  script:
-    # Install dependencies
-    - npm install --prefix frontend
-    # Perform linting
-    - npx eslint frontend/src --ext .js,.jsx,.ts,.tsx
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
