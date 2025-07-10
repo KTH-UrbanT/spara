@@ -2,6 +2,7 @@
 # as building is done during testing and deployment.
 stages:
   - prepare
+  - lint
   - build
   - test
   - deploy
@@ -62,8 +63,9 @@ prepare_environment:
 
 # Perform linting and formatting checks
 lint_python:
-  stage: prepare
+  stage: lint
   image: python:3.11-slim
+  before_script: [] # Disable default before_script
   needs:
     - prepare_environment
   script:
@@ -74,8 +76,9 @@ lint_python:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 lint_javascript:
-  stage: prepare
+  stage: lint
   image: node:20-slim
+  before_script: [] # Disable default before_script
   needs:
     - prepare_environment
   script:
@@ -90,6 +93,7 @@ lint_javascript:
 build_images:
   stage: build
   image: docker:24.0-cli
+  before_script: [] # Disable default before_script
   needs: 
     - prepare_environment
     - lint_python
@@ -122,6 +126,7 @@ build_images:
 test_frontend:
   stage: test
   image: docker:24.0-cli
+  before_script: [] # Disable default before_script
   needs:
     - build_images
   variables:
@@ -136,6 +141,7 @@ test_frontend:
 test_message_service:
   stage: test
   image: docker:24.0-cli
+  before_script: [] # Disable default before_script
   needs:
     - build_images
   services:
@@ -154,6 +160,7 @@ test_message_service:
 test_llm_service:
   stage: test
   image: docker:24.0-cli
+  before_script: [] # Disable default before_script
   needs:
     - build_images
   services:
