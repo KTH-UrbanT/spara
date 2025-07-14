@@ -1,3 +1,5 @@
+# Assembly Pipeline
+
 # We only need the stages test and deploy for this pipeline,
 # as building is done during testing and deployment.
 stages:
@@ -101,6 +103,14 @@ test_frontend:
     DOCKER_DRIVER: overlay2
   script:
     - echo "Frontend tests placeholder"
+    # Tag the submodule after successful tests
+    - |
+      cd frontend
+      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_COMMIT_SHORT_SHA}"
+      echo "Tagging frontend with: $TAG_NAME"
+      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
+      echo "FRONTEND_TAG=$TAG_NAME" >> ../submodule_tags.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -119,6 +129,14 @@ test_message_service:
     - docker load -i message-service.tar
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
     - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
+    # Tag the submodule after successful tests
+    - |
+      cd message-service
+      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_COMMIT_SHORT_SHA}"
+      echo "Tagging message-service with: $TAG_NAME"
+      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
+      echo "MESSAGE_SERVICE_TAG=$TAG_NAME" >> ../submodule_tags.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -137,6 +155,14 @@ test_llm_service:
     - docker load -i llm-service.tar
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
     - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
+    # Tag the submodule after successful tests
+    - |
+      cd llm-service
+      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_COMMIT_SHORT_SHA}"
+      echo "Tagging llm-service with: $TAG_NAME"
+      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
+      echo "LLM_SERVICE_TAG=$TAG_NAME" >> ../submodule_tags.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -183,7 +209,7 @@ sync_staging:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # Deploys the application: installs Docker if needed, loads images, and starts containers.
-deploy_staging:
+deploy_test_env_staging:
   needs:
     - sync_staging
   stage: deploy
@@ -195,7 +221,7 @@ deploy_staging:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
-    - echo "Deploying to staging server"
+    - echo "Deploying to test staging server"
     # Install Docker if not installed, load tested images, and start containers
     - |
       ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
@@ -229,17 +255,23 @@ deploy_staging:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Get the latest dev branch of each submodule for the dev
-# branch of the assembly repository and commit this.
-update_submodules_dev:
+# Collect all submodule tags after testing
+collect_tested_tags:
+  stage: test
   image: alpine:latest
+  needs:
+    - deploy_test_env_staging
   script:
-    # Get submodules
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule foreach 'git checkout dev && git pull origin dev'
-    # Add each submodule folder
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git add message-service llm-service frontend
-    # Commit the changes
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git commit -m "Update submodules to latest dev branch" || echo "No changes to commit"
+    - echo "=== TESTED SUBMODULE TAGS ==="
+    - echo "Message Service: $MESSAGE_SERVICE_TAG"
+    - echo "LLM Service: $LLM_SERVICE_TAG"
+    - echo "Frontend: $FRONTEND_TAG"
+    - echo "=== END TAGS ==="
+    # Optionally create a release tag for the assembly repo
+    - |
+      ASSEMBLY_TAG="release-$(date +%Y%m%d-%H%M%S)"
+      echo "Creating assembly release tag: $ASSEMBLY_TAG"
+      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$ASSEMBLY_TAG" -m "Assembly release with tested submodules: MS:$MESSAGE_SERVICE_TAG, LLM:$LLM_SERVICE_TAG, FE:$FRONTEND_TAG"
+      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$ASSEMBLY_TAG"
   rules:
-    - when: manual
-      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
