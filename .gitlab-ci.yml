@@ -257,7 +257,7 @@ deploy_test_env_staging:
 
 # Collect all submodule tags after testing
 collect_tested_tags:
-  stage: cd
+  stage: deploy
   image: alpine:latest
   needs:
     - deploy_test_env_staging
