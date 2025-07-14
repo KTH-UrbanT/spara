@@ -38,6 +38,10 @@ before_script:
   - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
   - echo "$LLM_SERVICE_ENV"     > llm-service/.env
 
+  # Configure GIT user for commits
+  - git config --global user.email "wfrid@kth.se"
+  - git config --global user.name "CI/CD Bot"
+
 # Prepare the environment
 prepare_environment:
   stage: prepare
@@ -256,7 +260,7 @@ deploy_test_env_staging:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # Collect all submodule tags after testing
-collect_tested_tags:
+tag_sub_modules:
   stage: deploy
   image: alpine:latest
   needs:
