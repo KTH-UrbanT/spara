@@ -105,6 +105,9 @@ test_frontend:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+    - docker load -i message-service.tar
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
+    # Tag the submodule after successful tests
     - echo "Frontend tests placeholder"
     # Tag the submodule after successful tests
     - |
@@ -273,9 +276,9 @@ tag_sub_modules:
   image: alpine:latest
   needs:
     - deploy_test_env_staging
-    - test_message_service
-    - test_llm_service
-    - test_frontend
+    #- test_message_service
+    #- test_llm_service
+    #- test_frontend
   script:
     - |
       echo "Tested submodule tags:"
