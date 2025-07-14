@@ -111,6 +111,7 @@ test_frontend:
     - echo "Frontend tests placeholder"
     # Tag the submodule after successful tests
     - |
+      set -e
       cd frontend
       TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_COMMIT_SHORT_SHA}"
       echo "Tagging frontend with: $TAG_NAME"
@@ -140,6 +141,7 @@ test_message_service:
     - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
     # Tag the submodule after successful tests
     - |
+      set -e
       cd message-service
       TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_COMMIT_SHORT_SHA}"
       echo "Tagging message-service with: $TAG_NAME"
@@ -169,6 +171,7 @@ test_llm_service:
     - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
     # Tag the submodule after successful tests
     - |
+      set -e
       cd llm-service
       TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_COMMIT_SHORT_SHA}"
       echo "Tagging llm-service with: $TAG_NAME"
