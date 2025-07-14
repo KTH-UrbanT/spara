@@ -113,8 +113,8 @@ test_frontend:
       cd frontend
       TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging frontend with: $TAG_NAME"
-      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
+      git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+      git push origin "$TAG_NAME"
       echo "FRONTEND_TAG=$TAG_NAME" >> ../frontend_tag.env
   artifacts:
     reports:
