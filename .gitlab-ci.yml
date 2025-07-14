@@ -257,16 +257,16 @@ deploy_test_env_staging:
 
 # Collect all submodule tags after testing
 collect_tested_tags:
-  stage: test
+  stage: cd
   image: alpine:latest
   needs:
     - deploy_test_env_staging
   script:
-    - echo "=== TESTED SUBMODULE TAGS ==="
-    - echo "Message Service: $MESSAGE_SERVICE_TAG"
-    - echo "LLM Service: $LLM_SERVICE_TAG"
-    - echo "Frontend: $FRONTEND_TAG"
-    - echo "=== END TAGS ==="
+    - |
+      echo "Tested submodule tags:"
+      echo "Message Service: $MESSAGE_SERVICE_TAG"
+      echo "LLM Service: $LLM_SERVICE_TAG"
+      echo "Frontend: $FRONTEND_TAG"
     # Optionally create a release tag for the assembly repo
     - |
       ASSEMBLY_TAG="release-$(date +%Y%m%d-%H%M%S)"
