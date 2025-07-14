@@ -1,7 +1,5 @@
 # Assembly Pipeline
 
-# We only need the stages test and deploy for this pipeline,
-# as building is done during testing and deployment.
 stages:
   - prepare
   - build
@@ -113,7 +111,7 @@ test_frontend:
     - |
       set -e
       cd frontend
-      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_COMMIT_SHORT_SHA}"
+      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging frontend with: $TAG_NAME"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
@@ -143,8 +141,11 @@ test_message_service:
     - |
       set -e
       cd message-service
-      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_COMMIT_SHORT_SHA}"
+      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging message-service with: $TAG_NAME"
+      # Print origin to verify it's correct
+      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git remote -v
+      # Create and push the tag
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
       echo "MESSAGE_SERVICE_TAG=$TAG_NAME" >> ../message_service_tag.env
@@ -173,7 +174,7 @@ test_llm_service:
     - |
       set -e
       cd llm-service
-      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_COMMIT_SHORT_SHA}"
+      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging llm-service with: $TAG_NAME"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
@@ -194,7 +195,7 @@ sync_staging:
     - test_llm_service
     - test_frontend
   stage: deploy
-  image: docker:latest
+  image: docker:24.0-cli
   environment:
     name: staging
     url: https://test.sparabot.com
@@ -231,7 +232,7 @@ deploy_test_env_staging:
   needs:
     - sync_staging
   stage: deploy
-  image: docker:latest
+  image: docker:24.0-cli
   environment:
     name: staging
     url: https://test.sparabot.com
