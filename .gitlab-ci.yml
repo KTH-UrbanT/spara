@@ -13,7 +13,7 @@ variables:
   REMOTE_HOST: $STAGING_HOST
   REMOTE_PATH: /home/ubuntu/spara
   SSH_REMOTE_HOST_KEY: $SSH_STAGING_HOST_KEY
-  SSH_GITHUB_PRIVATE_KEY: $SSH_GITHUB_KEY
+  SSH_GITHUB_PRIVATE_KEY: $GITLAB_CI_DEPLOY_KEY
 
 # The 'container_setup' job initializes the Git repository, installs necessary dependencies,
 # and prepares the environment for testing and deployment.
