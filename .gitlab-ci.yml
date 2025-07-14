@@ -37,6 +37,10 @@ before_script:
   # inject .env files
   - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
   - echo "$LLM_SERVICE_ENV"     > llm-service/.env
+  
+  # Configure git user for all jobs
+  - git config --global user.email "ci@sparabot.com"
+  - git config --global user.name "CI Bot"
 
 # Prepare the environment
 prepare_environment:
@@ -48,9 +52,6 @@ prepare_environment:
     - rm -f message-service.tar llm-service.tar frontend.tar
     # Get submodules
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
-    # Add author
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git config --global user.email "ci@sparabot.com"
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git config --global user.name "CI Bot"
     # Lock submodule SHAs for the test branch
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git add message-service llm-service frontend
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git commit -m "Lock submodule SHAs for test branch" || echo "No changes to commit"
@@ -98,6 +99,8 @@ test_frontend:
   image: docker:24.0-cli
   needs:
     - build_images
+  services:
+    - docker:dind
   variables:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
@@ -110,7 +113,10 @@ test_frontend:
       echo "Tagging frontend with: $TAG_NAME"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
-      echo "FRONTEND_TAG=$TAG_NAME" >> ../submodule_tags.env
+      echo "FRONTEND_TAG=$TAG_NAME" >> ../frontend_tag.env
+  artifacts:
+    reports:
+      dotenv: frontend_tag.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -136,7 +142,10 @@ test_message_service:
       echo "Tagging message-service with: $TAG_NAME"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
-      echo "MESSAGE_SERVICE_TAG=$TAG_NAME" >> ../submodule_tags.env
+      echo "MESSAGE_SERVICE_TAG=$TAG_NAME" >> ../message_service_tag.env
+  artifacts:
+    reports:
+      dotenv: message_service_tag.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -162,7 +171,10 @@ test_llm_service:
       echo "Tagging llm-service with: $TAG_NAME"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
-      echo "LLM_SERVICE_TAG=$TAG_NAME" >> ../submodule_tags.env
+      echo "LLM_SERVICE_TAG=$TAG_NAME" >> ../llm_service_tag.env
+  artifacts:
+    reports:
+      dotenv: llm_service_tag.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -261,6 +273,9 @@ tag_sub_modules:
   image: alpine:latest
   needs:
     - deploy_test_env_staging
+    - test_message_service
+    - test_llm_service
+    - test_frontend
   script:
     - |
       echo "Tested submodule tags:"
