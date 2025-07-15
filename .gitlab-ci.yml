@@ -14,7 +14,7 @@ variables:
   REMOTE_PATH: /home/ubuntu/spara
 
   SSH_TEST_REMOTE_HOST_KEY: $SSH_STAGING_HOST_KEY
-  SSH_GITHUB_PRIVATE_KEY: $SSH_GITHUB_KEY_WF
+  SSH_GITHUB_PRIVATE_KEY: $SSH_GITHUB_KEY
 
 # The 'container_setup' job initializes the Git repository, installs necessary dependencies,
 # and prepares the environment for testing and deployment.
@@ -55,8 +55,8 @@ prepare_environment:
     # Get submodules
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
     # Lock submodule SHAs for the test branch
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git add message-service llm-service frontend
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git commit -m "Lock submodule SHAs for test branch" || echo "No changes to commit"
+    - git add message-service llm-service frontend
+    - git commit -m "Lock submodule SHAs for test branch" || echo "No changes to commit"
   artifacts:
     paths:
       - message-service/
@@ -122,6 +122,7 @@ test_frontend:
       cd frontend
       TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging frontend with: $TAG_NAME"
+      git remote set-url origin git@github.com:KTH-UrbanT/spara-frontend.git
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
       echo "FRONTEND_TAG=$TAG_NAME" >> ../frontend_tag.env
@@ -153,9 +154,7 @@ test_message_service:
       cd message-service
       TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging message-service with: $TAG_NAME"
-      # Print origin to verify it's correct
-      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git remote -v
-      # Create and push the tag
+      git remote set-url origin git@github.com:KTH-UrbanT/spara-message-service.git
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
       echo "MESSAGE_SERVICE_TAG=$TAG_NAME" >> ../message_service_tag.env
@@ -187,6 +186,7 @@ test_llm_service:
       cd llm-service
       TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging llm-service with: $TAG_NAME"
+      git remote set-url origin git@github.com:KTH-UrbanT/spara-llm-service.git
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
       echo "LLM_SERVICE_TAG=$TAG_NAME" >> ../llm_service_tag.env
