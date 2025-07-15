@@ -12,8 +12,9 @@ variables:
   REMOTE_USER: ubuntu
   REMOTE_HOST: $STAGING_HOST
   REMOTE_PATH: /home/ubuntu/spara
-  SSH_REMOTE_HOST_KEY: $SSH_STAGING_HOST_KEY
-  SSH_GITHUB_PRIVATE_KEY: $GITLAB_CI_DEPLOY_KEY
+
+  SSH_TEST_REMOTE_HOST_KEY: $SSH_STAGING_HOST_KEY
+  SSH_GITHUB_PRIVATE_KEY: $SSH_GITHUB_KEY
 
 # The 'container_setup' job initializes the Git repository, installs necessary dependencies,
 # and prepares the environment for testing and deployment.
@@ -25,8 +26,8 @@ before_script:
   - mkdir -p ~/.ssh
   - echo "$SSH_GITHUB_PRIVATE_KEY" > ~/.ssh/github_key
   - chmod 600 ~/.ssh/github_key
-  - echo "$SSH_REMOTE_HOST_KEY" > ~/.ssh/remote_key
-  - chmod 600 ~/.ssh/remote_key
+  - echo "$SSH_TEST_REMOTE_HOST_KEY" > ~/.ssh/test_remote_key
+  - chmod 600 ~/.ssh/test_remote_key
 
   # trust hosts
   - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
@@ -41,6 +42,9 @@ before_script:
   - git config --global user.name "CI Bot"
 
 # Prepare the environment
+# Here we load the submodules as given, from GitHub (using SSH_GITHUB_PRIVATE_KEY).
+# We do this since GitHub allways has the latest versions, and pulling from
+# GitLab can lead to issues with submodule SHAs.
 prepare_environment:
   stage: prepare
   image: alpine:latest
@@ -62,6 +66,8 @@ prepare_environment:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # Build images
+# Here we build the Docker images for the services, using the Docker Compose file,
+# and save them as tar files for later use (to speed up deployment).
 build_images:
   stage: build
   image: docker:24.0-cli
@@ -92,6 +98,9 @@ build_images:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # Frontend test job
+# Here we load the frontend Docker image, start the service using Docker Compose,
+# and run tests. After successful tests, we tag the submodule with a timestamp,
+# and finally push the tag to the remote repository (on GitHub).
 test_frontend:
   stage: test
   image: docker:24.0-cli
@@ -113,8 +122,8 @@ test_frontend:
       cd frontend
       TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging frontend with: $TAG_NAME"
-      git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-      git push origin "$TAG_NAME"
+      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+      GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git push origin "$TAG_NAME"
       echo "FRONTEND_TAG=$TAG_NAME" >> ../frontend_tag.env
   artifacts:
     reports:
@@ -123,6 +132,7 @@ test_frontend:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # Message Service test job
+# The process is similar to the frontend test job.
 test_message_service:
   stage: test
   image: docker:24.0-cli
@@ -156,6 +166,7 @@ test_message_service:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # LLM Service test job
+# The process is similar to the message service test job.
 test_llm_service:
   stage: test
   image: docker:24.0-cli
@@ -187,6 +198,9 @@ test_llm_service:
 
 
 # Syncs files, .envs, and tarballs to the remote server and ensures directories exist.
+# Here we connect to the test remote server, stop any running containers, clean the deployment folder,
+# and copy the necessary files including the Docker Compose file, .env files, and tarballs
+# for the tested Docker images.
 sync_staging:
   needs:
     - build_images
@@ -203,27 +217,27 @@ sync_staging:
     - echo "Preparing and syncing files to remote server"
     # Stop and remove any running containers (only if compose file exists)
     - |
-      ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
+      ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
         if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
           cd $REMOTE_PATH/infra
           sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true
         fi
       EOF
     # Clean the deployment folder
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
+    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
     # Ensure base directory exists
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
+    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
     # Copy the infra folder to the remote server
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
+    - rsync -avz -e "ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
     # Create directories for submodules if they don't exist
-    - ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service $REMOTE_PATH/llm-service $REMOTE_PATH/frontend"
+    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service $REMOTE_PATH/llm-service $REMOTE_PATH/frontend"
     # Copy submodule directories with .env files
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
+    - rsync -avz -e "ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
+    - rsync -avz -e "ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
     # Copy the tested Docker images (tar files) to the remote server
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" message-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" llm-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
-    - rsync -avz -e "ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no" frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+    - rsync -avz -e "ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no" message-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+    - rsync -avz -e "ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no" llm-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+    - rsync -avz -e "ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no" frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -243,7 +257,7 @@ deploy_test_env_staging:
     - echo "Deploying to test staging server"
     # Install Docker if not installed, load tested images, and start containers
     - |
-      ssh -i ~/.ssh/remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
+      ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
         set -e
         # Install Docker and Compose if not already present
         if ! command -v docker &> /dev/null; then
