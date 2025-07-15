@@ -112,8 +112,8 @@ test_frontend:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
-    - docker load -i message-service.tar
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
+    - docker load -i frontend.tar
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d frontend
     # Tag the submodule after successful tests
     - echo "Frontend tests placeholder"
     # Tag the submodule after successful tests
@@ -208,7 +208,7 @@ test_llm_service:
       cd llm-service
       export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
       git remote set-url origin git@github.com:KTH-UrbanT/spara-llm-service.git
-      
+
       
       # Get the correct version (including history)
       git fetch origin
