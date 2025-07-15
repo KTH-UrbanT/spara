@@ -122,6 +122,8 @@ test_frontend:
       cd frontend
       export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
 
+      git remote set-url origin git@github.com:KTH-UrbanT/spara-frontend.git
+
       # Get the correct version (including history)
       echo "1"
       git branch
@@ -135,7 +137,6 @@ test_frontend:
       # Tagging
       TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging frontend with: $TAG_NAME"
-      git remote set-url origin git@github.com:KTH-UrbanT/spara-frontend.git
       git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       git push origin "$TAG_NAME"
       echo "FRONTEND_TAG=$TAG_NAME" >> ../frontend_tag.env
@@ -166,6 +167,8 @@ test_message_service:
       set -e
       cd message-service
       export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+
+      git remote set-url origin git@github.com:KTH-UrbanT/spara-message-service.git
       
       # Get the correct version (including history)
       git fetch origin
@@ -174,7 +177,6 @@ test_message_service:
       # Tagging
       TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging message-service with: $TAG_NAME"
-      git remote set-url origin git@github.com:KTH-UrbanT/spara-message-service.git
       git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       git push origin "$TAG_NAME"
       echo "MESSAGE_SERVICE_TAG=$TAG_NAME" >> ../message_service_tag.env
@@ -205,6 +207,8 @@ test_llm_service:
       set -e
       cd llm-service
       export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+      git remote set-url origin git@github.com:KTH-UrbanT/spara-llm-service.git
+      
       
       # Get the correct version (including history)
       git fetch origin
@@ -213,7 +217,6 @@ test_llm_service:
       # Tagging
       TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging llm-service with: $TAG_NAME"
-      git remote set-url origin git@github.com:KTH-UrbanT/spara-llm-service.git
       git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       git push origin "$TAG_NAME"
       echo "LLM_SERVICE_TAG=$TAG_NAME" >> ../llm_service_tag.env
