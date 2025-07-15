@@ -52,8 +52,19 @@ prepare_environment:
     # Clean any existing submodule directories first
     - rm -rf message-service llm-service frontend
     - rm -f message-service.tar llm-service.tar frontend.tar
-    # Get submodules
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
+    # Clone submodules directly as proper git repositories
+    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+    - git clone git@github.com:KTH-UrbanT/spara-message-service.git message-service
+    - git clone git@github.com:KTH-UrbanT/spara-llm-service.git llm-service  
+    - git clone git@github.com:KTH-UrbanT/spara-frontend.git frontend
+    # Configure git user for each submodule
+    - |
+      for submodule in message-service llm-service frontend; do
+        cd "$submodule"
+        git config user.email "ci@sparabot.com"
+        git config user.name "CI Bot"
+        cd ..
+      done
     # Lock submodule SHAs for the test branch
     - git add message-service llm-service frontend
     - git commit -m "Lock submodule SHAs for test branch" || echo "No changes to commit"
@@ -123,15 +134,17 @@ test_frontend:
       export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
 
       # Get the correct version (including history)
-      echo "1"
-      git branch
+      echo "Current git status:"
+      git status
       git fetch origin
-      echo "2"
-      git branch
       git checkout dev
-      echo "3"
-      git branch
 
+      # Tagging
+      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      echo "Tagging frontend with: $TAG_NAME"
+      git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+      git push origin "$TAG_NAME"
+      echo "FRONTEND_TAG=$TAG_NAME" >> ../frontend_tag.env
   artifacts:
     reports:
       dotenv: frontend_tag.env
@@ -164,6 +177,12 @@ test_message_service:
       git fetch origin
       git checkout dev
 
+      # Tagging
+      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      echo "Tagging message-service with: $TAG_NAME"
+      git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+      git push origin "$TAG_NAME"
+      echo "MESSAGE_SERVICE_TAG=$TAG_NAME" >> ../message_service_tag.env
   artifacts:
     reports:
       dotenv: message_service_tag.env
@@ -196,6 +215,12 @@ test_llm_service:
       git fetch origin
       git checkout dev
 
+      # Tagging
+      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      echo "Tagging llm-service with: $TAG_NAME"
+      git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+      git push origin "$TAG_NAME"
+      echo "LLM_SERVICE_TAG=$TAG_NAME" >> ../llm_service_tag.env
   artifacts:
     reports:
       dotenv: llm_service_tag.env
