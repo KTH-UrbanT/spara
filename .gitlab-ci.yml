@@ -112,9 +112,6 @@ test_frontend:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
-    # Install Node.js and npm
-    - npm install -g npm@11.3.0
-    - npm install --no-audit
     # Load the frontend Docker image
     - docker load -i frontend.tar
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d frontend
@@ -237,7 +234,7 @@ sync_staging:
     - test_llm_service
     - test_frontend
   stage: deploy
-  image: docker:24.0-cli
+  image: alpine:3.18
   environment:
     name: staging
     url: https://test.sparabot.com
@@ -274,7 +271,7 @@ deploy_test_env_staging:
   needs:
     - sync_staging
   stage: deploy
-  image: docker:24.0-cli
+  image: alpine:3.18
   environment:
     name: staging
     url: https://test.sparabot.com
@@ -319,7 +316,7 @@ deploy_test_env_staging:
 # Collect all submodule tags after testing
 tag_sub_modules:
   stage: deploy
-  image: alpine:latest
+  image: alpine/git:2.40.1
   needs:
     - deploy_test_env_staging
     #- test_message_service
