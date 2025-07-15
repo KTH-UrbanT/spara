@@ -53,7 +53,6 @@ prepare_environment:
     - rm -rf message-service llm-service frontend
     - rm -f message-service.tar llm-service.tar frontend.tar
     # Get submodules
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git clone --recursive git@github.com:KTH-UrbanT/spara.git
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git clone --recurse-submodules git@github.com:KTH-UrbanT/spara.git
     # Lock submodule SHAs for the test branch
     - git add message-service llm-service frontend
