@@ -105,6 +105,7 @@ test_all_services:
   image: docker:24.0-cli
   needs:
     - build_images
+    - prepare_environment
   services:
     - docker:dind
   variables:
@@ -142,8 +143,8 @@ test_all_services:
       # Tag message-service
       cd message-service
       git remote set-url origin git@github.com:KTH-UrbanT/spara-message-service.git
-      #git fetch origin
-      #git checkout dev
+      git fetch origin
+      git checkout dev
       MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging message-service with: $MESSAGE_TAG"
       git tag -a "$MESSAGE_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
@@ -154,8 +155,8 @@ test_all_services:
       # Tag llm-service
       cd llm-service
       git remote set-url origin git@github.com:KTH-UrbanT/spara-llm-service.git
-      #git fetch origin
-      #git checkout dev
+      git fetch origin
+      git checkout dev
       LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging llm-service with: $LLM_TAG"
       git tag -a "$LLM_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
@@ -166,8 +167,8 @@ test_all_services:
       # Tag frontend
       cd frontend
       git remote set-url origin git@github.com:KTH-UrbanT/spara-frontend.git
-      #git fetch origin
-      #git checkout dev
+      git fetch origin
+      git checkout dev
       FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging frontend with: $FRONTEND_TAG"
       git tag -a "$FRONTEND_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
