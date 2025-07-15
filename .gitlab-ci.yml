@@ -112,6 +112,10 @@ test_frontend:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+    # Install Node.js and npm
+    - npm install -g npm@11.3.0
+    - npm install --no-audit
+    # Load the frontend Docker image
     - docker load -i frontend.tar
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d frontend
     # Tag the submodule after successful tests
@@ -125,17 +129,11 @@ test_frontend:
       git remote set-url origin git@github.com:KTH-UrbanT/spara-frontend.git
 
       # Get the correct version (including history)
-      echo "1"
-      git branch
       git fetch origin
-      echo "2"
-      git branch
       git checkout dev
-      echo "3"
-      git branch
 
       # Tagging
-      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      TAG_NAME="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging frontend with: $TAG_NAME"
       git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       git push origin "$TAG_NAME"
@@ -175,7 +173,7 @@ test_message_service:
       git checkout dev
 
       # Tagging
-      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      TAG_NAME="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging message-service with: $TAG_NAME"
       git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       git push origin "$TAG_NAME"
@@ -215,7 +213,7 @@ test_llm_service:
       git checkout dev
 
       # Tagging
-      TAG_NAME="tested-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      TAG_NAME="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
       echo "Tagging llm-service with: $TAG_NAME"
       git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
       git push origin "$TAG_NAME"
