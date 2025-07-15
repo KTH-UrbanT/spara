@@ -120,7 +120,7 @@ test_frontend:
     - |
       set -e
       cd frontend
-      - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+      export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
       # Ensure full history is available
       git fetch --unshallow || git fetch --all
       git fetch origin
