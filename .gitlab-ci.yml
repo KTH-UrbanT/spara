@@ -97,11 +97,10 @@ build_images:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Frontend test job
-# Here we load the frontend Docker image, start the service using Docker Compose,
-# and run tests. After successful tests, we tag the submodule with a timestamp,
-# and finally push the tag to the remote repository (on GitHub).
-test_frontend:
+# Combined test job
+# Tests all services in dependency order: message-service and llm-service first (both depend on redis),
+# then frontend (depends on message-service). Tags all submodules after successful tests.
+test_all_services:
   stage: test
   image: docker:24.0-cli
   needs:
@@ -112,112 +111,71 @@ test_frontend:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
-    # Load the frontend Docker image
-    - docker load -i frontend.tar
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d frontend
-    # Tag the submodule after successful tests
-    - echo "Frontend tests placeholder"
-    # Tag the submodule after successful tests
-    - |
-      set -e
-      cd frontend
-      export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-
-      git remote set-url origin git@github.com:KTH-UrbanT/spara-frontend.git
-
-      # Get the correct version (including history)
-      git fetch origin
-      git checkout dev
-
-      # Tagging
-      TAG_NAME="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-      echo "Tagging frontend with: $TAG_NAME"
-      git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-      git push origin "$TAG_NAME"
-      echo "FRONTEND_TAG=$TAG_NAME" >> ../frontend_tag.env
-  artifacts:
-    reports:
-      dotenv: frontend_tag.env
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Message Service test job
-# The process is similar to the frontend test job.
-test_message_service:
-  stage: test
-  image: docker:24.0-cli
-  needs:
-    - build_images
-  services:
-    - docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
+    # Load all Docker images
     - docker load -i message-service.tar
+    - docker load -i llm-service.tar
+    - docker load -i frontend.tar
+    
+    # Start dependencies first (redis and postgres)
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d redis message_store
+    
+    # Test message-service (depends on redis and postgres)
+    - echo "Testing message-service..."
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
     - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
-    # Tag the submodule after successful tests
-    - |
-      set -e
-      cd message-service
-      export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-
-      git remote set-url origin git@github.com:KTH-UrbanT/spara-message-service.git
-      
-      # Get the correct version (including history)
-      git fetch origin
-      git checkout dev
-
-      # Tagging
-      TAG_NAME="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-      echo "Tagging message-service with: $TAG_NAME"
-      git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-      git push origin "$TAG_NAME"
-      echo "MESSAGE_SERVICE_TAG=$TAG_NAME" >> ../message_service_tag.env
-  artifacts:
-    reports:
-      dotenv: message_service_tag.env
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# LLM Service test job
-# The process is similar to the message service test job.
-test_llm_service:
-  stage: test
-  image: docker:24.0-cli
-  needs:
-    - build_images
-  services:
-    - docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
-    - docker load -i llm-service.tar
+    
+    # Test llm-service (depends on redis)
+    - echo "Testing llm-service..."
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
     - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
-    # Tag the submodule after successful tests
+    
+    # Test frontend (depends on message-service)
+    - echo "Testing frontend..."
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d frontend
+    - echo "Frontend tests placeholder"
+    
+    # Tag all submodules after successful tests
     - |
       set -e
-      cd llm-service
       export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-      git remote set-url origin git@github.com:KTH-UrbanT/spara-llm-service.git
-
       
-      # Get the correct version (including history)
+      # Tag message-service
+      cd message-service
+      git remote set-url origin git@github.com:KTH-UrbanT/spara-message-service.git
       git fetch origin
       git checkout dev
-
-      # Tagging
-      TAG_NAME="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-      echo "Tagging llm-service with: $TAG_NAME"
-      git tag -a "$TAG_NAME" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-      git push origin "$TAG_NAME"
-      echo "LLM_SERVICE_TAG=$TAG_NAME" >> ../llm_service_tag.env
+      MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      echo "Tagging message-service with: $MESSAGE_TAG"
+      git tag -a "$MESSAGE_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+      git push origin "$MESSAGE_TAG"
+      echo "MESSAGE_SERVICE_TAG=$MESSAGE_TAG" >> ../combined_tags.env
+      cd ..
+      
+      # Tag llm-service
+      cd llm-service
+      git remote set-url origin git@github.com:KTH-UrbanT/spara-llm-service.git
+      git fetch origin
+      git checkout dev
+      LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      echo "Tagging llm-service with: $LLM_TAG"
+      git tag -a "$LLM_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+      git push origin "$LLM_TAG"
+      echo "LLM_SERVICE_TAG=$LLM_TAG" >> ../combined_tags.env
+      cd ..
+      
+      # Tag frontend
+      cd frontend
+      git remote set-url origin git@github.com:KTH-UrbanT/spara-frontend.git
+      git fetch origin
+      git checkout dev
+      FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      echo "Tagging frontend with: $FRONTEND_TAG"
+      git tag -a "$FRONTEND_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+      git push origin "$FRONTEND_TAG"
+      echo "FRONTEND_TAG=$FRONTEND_TAG" >> ../combined_tags.env
   artifacts:
     reports:
-      dotenv: llm_service_tag.env
+      dotenv: combined_tags.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -230,9 +188,7 @@ sync_staging:
   needs:
     - build_images
     - prepare_environment
-    - test_message_service
-    - test_llm_service
-    - test_frontend
+    - test_all_services
   stage: deploy
   image: alpine:3.18
   environment:
