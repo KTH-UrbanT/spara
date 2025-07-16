@@ -65,6 +65,7 @@ prepare_environment:
       - message-service/
       - llm-service/
       - frontend/
+      - shared/
     untracked: false
     when: on_success
     expire_in: 1 day
