@@ -56,13 +56,16 @@ prepare_environment:
   script:
     # Clean any existing repo and submodule directories first
     - ls
+    - ls ../
     #- git status
     #- rm -rf message-service llm-service frontend shared modules .git
     #- ls
     #- git status
     # Clone the main repo and all submodules recursively using the correct SSH key
+    - cd ../
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
     - git clone --recursive git@github.com:KTH-UrbanT/spara.git
+    - cd spara
     - git status
     - ls
   artifacts:
