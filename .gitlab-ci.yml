@@ -114,10 +114,6 @@ build_images:
     - docker save -o message-service.tar message-service:test
     - docker save -o llm-service.tar llm-service:test
     - docker save -o frontend.tar frontend:test
-  after_script:
-    # Clean up Docker images from the runner
-    - docker image prune -f || true
-    - docker container prune -f || true
   artifacts:
     paths:
       - message-service.tar
@@ -226,6 +222,36 @@ test_all_services:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
+cleanup_remote_disk:
+  stage: deploy
+  image: alpine:3.18
+  needs:
+    - build_images
+    - prepare_environment
+    - test_all_services
+  script:
+    - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
+    - |
+      $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<'EOF'
+        echo "Disk usage before cleanup:"
+        df -h /
+        echo "Cleaning up Docker..."
+        sudo docker system prune -af || true
+        sudo docker volume prune -f || true
+        echo "Cleaning up /tmp and old logs..."
+        sudo rm -rf /tmp/*
+        sudo find /var/log -type f -name "*.gz" -delete
+        sudo find /var/log -type f -name "*.1" -delete
+        echo "Disk usage after cleanup:"
+        df -h /
+        USAGE=$(df / | awk 'NR==2 {print $5}' | tr -d '%')
+        if [ "$USAGE" -gt 90 ]; then
+          echo "ERROR: Root filesystem is still over 90% full. Please free up space before deploying."
+          exit 1
+        fi
+      EOF
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # Syncs files, .envs, and tarballs to the remote server and ensures directories exist.
 # Here we connect to the test remote server, stop any running containers, clean the deployment folder,
@@ -236,6 +262,7 @@ sync_staging:
     - build_images
     - prepare_environment
     - test_all_services
+    - cleanup_remote_disk
   stage: deploy
   image: alpine:3.18
   environment:
@@ -251,30 +278,40 @@ sync_staging:
     - git status
     - cd ../
 
+    - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
+
     - echo "Preparing and syncing files to remote server"
+
     # Stop and remove any running containers (only if compose file exists)
     - |
-      ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
+      $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<EOF
         if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
           cd $REMOTE_PATH/infra
           sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true
+          echo "Stopped existing containers."
+        else
+          echo "No existing containers to stop or compose file not found."
         fi
       EOF
+
     # Clean the deployment folder
-    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
+    - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
     # Ensure base directory exists
-    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
+    - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
+
     # Copy the infra folder to the remote server
-    - rsync -avz -e "ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
+    - rsync -avz -e "$SSH_CMD" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
+
     # Create directories for submodules if they don't exist
-    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service $REMOTE_PATH/llm-service $REMOTE_PATH/frontend"
+    - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service $REMOTE_PATH/llm-service $REMOTE_PATH/frontend"
+
     # Copy submodule directories with .env files
-    - rsync -avz -e "ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
-    - rsync -avz -e "ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
+    - rsync -avz -e "$SSH_CMD" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
+    - rsync -avz -e "$SSH_CMD" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
     # Copy the tested Docker images (tar files) to the remote server
-    - rsync -avz -e "ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no" message-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
-    - rsync -avz -e "ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no" llm-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
-    - rsync -avz -e "ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no" frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" message-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" llm-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
