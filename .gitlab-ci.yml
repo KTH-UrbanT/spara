@@ -136,53 +136,48 @@ test_all_services:
     - echo "Frontend tests placeholder"
     
     # Tag all submodules after successful tests
-    - |
-      set -e
-      export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-      
-      # Initialize combined_tags.env file
-      touch combined_tags.env
-      
-      # Re-initialize submodules as git repositories
-      echo "Re-initializing submodules as git repositories..."
-      
-      # Tag message-service
-      cd message-service
-      git init
-      git remote add origin git@github.com:KTH-UrbanT/spara-message-service.git
-      git fetch origin
-      git checkout dev
-      MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-      echo "Tagging message-service with: $MESSAGE_TAG"
-      git tag -a "$MESSAGE_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-      git push origin "$MESSAGE_TAG"
-      echo "MESSAGE_SERVICE_TAG=$MESSAGE_TAG" >> ../combined_tags.env
-      cd ..
-      
-      # Tag llm-service
-      cd llm-service
-      git init
-      git remote add origin git@github.com:KTH-UrbanT/spara-llm-service.git
-      git fetch origin
-      git checkout dev
-      LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-      echo "Tagging llm-service with: $LLM_TAG"
-      git tag -a "$LLM_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-      git push origin "$LLM_TAG"
-      echo "LLM_SERVICE_TAG=$LLM_TAG" >> ../combined_tags.env
-      cd ..
-      
-      # Tag frontend
-      cd frontend
-      git init
-      git remote add origin git@github.com:KTH-UrbanT/spara-frontend.git
-      git fetch origin
-      git checkout dev
-      FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-      echo "Tagging frontend with: $FRONTEND_TAG"
-      git tag -a "$FRONTEND_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-      git push origin "$FRONTEND_TAG"
-      echo "FRONTEND_TAG=$FRONTEND_TAG" >> ../combined_tags.env
+    - set -e
+    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+    - touch combined_tags.env
+
+    # Tag message-service
+    - cd message-service
+    - git init
+    - git remote add origin git@github.com:KTH-UrbanT/spara-message-service.git
+    - git fetch origin
+    - git checkout dev
+    - MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - echo "Tagging message-service with: $MESSAGE_TAG"
+    - git tag -a "$MESSAGE_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+    - git push origin "$MESSAGE_TAG"
+    - echo "MESSAGE_SERVICE_TAG=$MESSAGE_TAG" >> ../combined_tags.env
+    - cd ..
+
+    # Tag llm-service
+    - cd llm-service
+    - git init
+    - git remote add origin git@github.com:KTH-UrbanT/spara-llm-service.git
+    - git fetch origin
+    - git checkout dev
+    - LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - echo "Tagging llm-service with: $LLM_TAG"
+    - git tag -a "$LLM_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+    - git push origin "$LLM_TAG"
+    - echo "LLM_SERVICE_TAG=$LLM_TAG" >> ../combined_tags.env
+    - cd ..
+
+    # Tag frontend
+    - cd frontend
+    - git init
+    - git remote add origin git@github.com:KTH-UrbanT/spara-frontend.git
+    - git fetch origin
+    - git checkout dev
+    - FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - echo "Tagging frontend with: $FRONTEND_TAG"
+    - git tag -a "$FRONTEND_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+    - git push origin "$FRONTEND_TAG"
+    - echo "FRONTEND_TAG=$FRONTEND_TAG" >> ../combined_tags.env
+    - cd ..
   artifacts:
     reports:
       dotenv: combined_tags.env
