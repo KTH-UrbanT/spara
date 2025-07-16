@@ -147,7 +147,7 @@ test_all_services:
     - git fetch origin
     - git checkout dev
     - MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "Tagging message-service with: $MESSAGE_TAG"
+    - echo "Tagging message-service with '$MESSAGE_TAG'"
     - git tag -a "$MESSAGE_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
     - git push origin "$MESSAGE_TAG"
     - echo "MESSAGE_SERVICE_TAG=$MESSAGE_TAG" >> ../combined_tags.env
@@ -160,7 +160,7 @@ test_all_services:
     - git fetch origin
     - git checkout dev
     - LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "Tagging llm-service with: $LLM_TAG"
+    - echo "Tagging llm-service with '$LLM_TA"
     - git tag -a "$LLM_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
     - git push origin "$LLM_TAG"
     - echo "LLM_SERVICE_TAG=$LLM_TAG" >> ../combined_tags.env
@@ -173,7 +173,7 @@ test_all_services:
     - git fetch origin
     - git checkout dev
     - FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "Tagging frontend with: $FRONTEND_TAG"
+    - echo "Tagging frontend with '$FRONTEND_TAG'"
     - git tag -a "$FRONTEND_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
     - git push origin "$FRONTEND_TAG"
     - echo "FRONTEND_TAG=$FRONTEND_TAG" >> ../combined_tags.env
