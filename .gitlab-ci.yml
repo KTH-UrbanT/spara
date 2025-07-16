@@ -50,8 +50,8 @@ prepare_environment:
   image: alpine:latest
   script:
     # Clean any existing submodule directories first
-    - rm -rf message-service llm-service frontend
-    - rm -f message-service.tar llm-service.tar frontend.tar
+    #- rm -rf message-service llm-service frontend
+    #- rm -f message-service.tar llm-service.tar frontend.tar
     # Get submodules
     - ls
     - git status
