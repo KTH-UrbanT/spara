@@ -55,7 +55,6 @@ prepare_environment:
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
     - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git .
     - git checkout "$CI_COMMIT_REF_NAME"
-    - git status
 
     # Make sure folders for env files exist
     #- mkdir -p message-service llm-service
@@ -63,7 +62,15 @@ prepare_environment:
     # inject .env files
     - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
     - echo "$LLM_SERVICE_ENV"     > llm-service/.env
+
     - ls
+    - git status
+    - git submodule status
+    - cd frontend
+    - git branch
+    - git status
+    - cd ../
+
   artifacts:
     paths:
       - message-service/
@@ -94,9 +101,12 @@ build_images:
   script:
 
     - ls
-    - ls message-service
-    - ls llm-service
-    - ls frontend
+    - git status
+    - git submodule status
+    - cd frontend
+    - git branch
+    - git status
+    - cd ../
 
     - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache
 
@@ -134,6 +144,14 @@ test_all_services:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+
+    - ls
+    - git status
+    - git submodule status
+    - cd frontend
+    - git branch
+    - git status
+    - cd ../
 
     # Load all Docker images
     - docker load -i message-service.tar
