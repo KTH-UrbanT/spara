@@ -21,6 +21,12 @@ variables:
 # and prepares the environment for testing and deployment.
 before_script:
 
+  # install needed CLIs (only if running on Alpine)
+  - |
+    if grep -qi alpine /etc/os-release; then
+    apk add --no-cache git openssh git openssh-client rsync
+    fi
+
   # prepare SSH dir and keys
   - mkdir -p ~/.ssh
   - echo "$SSH_GITHUB_PRIVATE_KEY" > ~/.ssh/github_key
@@ -44,11 +50,6 @@ prepare_environment:
   stage: prepare
   image: alpine:latest
   script:
-    # install needed CLIs (only if running on Alpine)
-    - |
-      if grep -qi alpine /etc/os-release; then
-      apk add --no-cache git openssh git openssh-client rsync
-      fi
   
     - ls
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
