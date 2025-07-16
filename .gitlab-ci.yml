@@ -21,6 +21,7 @@ variables:
 # and prepares the environment for testing and deployment.
 before_script:
   # install needed CLIs
+  - apk add --no-cache git openssh
   - apk add --no-cache git openssh-client rsync
 
   # prepare SSH dir and keys
