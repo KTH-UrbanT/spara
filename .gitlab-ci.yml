@@ -142,7 +142,6 @@ test_all_services:
 
     # Tag message-service
     - cd message-service
-    - git init
     - git remote add origin git@github.com:KTH-UrbanT/spara-message-service.git
     - git fetch origin
     - git checkout dev
@@ -155,12 +154,11 @@ test_all_services:
 
     # Tag llm-service
     - cd llm-service
-    - git init
     - git remote add origin git@github.com:KTH-UrbanT/spara-llm-service.git
     - git fetch origin
     - git checkout dev
     - LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "Tagging llm-service with '$LLM_TA"
+    - echo "Tagging llm-service with '$LLM_TAG"
     - git tag -a "$LLM_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
     - git push origin "$LLM_TAG"
     - echo "LLM_SERVICE_TAG=$LLM_TAG" >> ../combined_tags.env
@@ -168,7 +166,6 @@ test_all_services:
 
     # Tag frontend
     - cd frontend
-    - git init
     - git remote add origin git@github.com:KTH-UrbanT/spara-frontend.git
     - git fetch origin
     - git checkout dev
