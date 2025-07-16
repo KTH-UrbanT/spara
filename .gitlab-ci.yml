@@ -48,7 +48,7 @@ before_script:
 # GitLab can lead to issues with submodule SHAs.
 prepare_environment:
   stage: prepare
-  image: alpine:latest
+  image: alpine:3.18
   script:
   
     - ls
@@ -338,7 +338,7 @@ deploy_test_env_staging:
 # Tag the submodules and the assembly repo after successful tests.
 tagging:
   stage: deploy
-  image: alpine/git:2.40.1
+  image: alpine:3.18
   needs:
     - build_images
     - deploy_test_env_staging
