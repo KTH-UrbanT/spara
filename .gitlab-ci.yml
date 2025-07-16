@@ -131,8 +131,6 @@ test_all_services:
     DOCKER_DRIVER: overlay2
   script:
 
-    - cd ../spara
-
     # Load all Docker images
     - docker load -i message-service.tar
     - docker load -i llm-service.tar
