@@ -70,7 +70,7 @@ prepare_environment:
       - llm-service/
       - frontend/
       - shared/
-      - modules/
+      - infra/
     untracked: false
     when: on_success
     expire_in: 1 day
