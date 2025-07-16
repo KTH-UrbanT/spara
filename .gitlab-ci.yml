@@ -57,7 +57,7 @@ prepare_environment:
     - ls
     - cd ../
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-    - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git
+    - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git .
     - cd spara
     - git checkout "$CI_COMMIT_REF_NAME"
     - git status
@@ -90,8 +90,6 @@ build_images:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
-
-    - cd ../spara
 
     - ls
     - ls message-service
