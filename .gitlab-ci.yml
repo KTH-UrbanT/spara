@@ -15,6 +15,7 @@ variables:
 
   SSH_TEST_REMOTE_HOST_KEY: $SSH_STAGING_HOST_KEY
   SSH_GITHUB_PRIVATE_KEY: $SSH_GITHUB_KEY
+  GIT_STRATEGY: none
 
 # The 'container_setup' job initializes the Git repository, installs necessary dependencies,
 # and prepares the environment for testing and deployment.
@@ -49,20 +50,16 @@ prepare_environment:
   stage: prepare
   image: alpine:latest
   script:
-    # Clean any existing submodule directories first
-    #- rm -rf message-service llm-service frontend
-    #- rm -f message-service.tar llm-service.tar frontend.tar
-    # Get submodules
+    # Clean any existing repo and submodule directories first
     - ls
     - git status
-    #- GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
-    # We know that --force is safe.
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive --force
+    - rm -rf message-service llm-service frontend shared modules .git
+    - ls
     - git status
-    # Lock submodule SHAs for the test branch
-    #- git add message-service llm-service frontend
-    #- git commit -m "Lock submodule SHAs for test branch" || echo "No changes to commit"
-    #- git status
+    # Clone the main repo and all submodules recursively using the correct SSH key
+    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+    - $GIT_SSH_COMMAND git clone --recursive git@github.com:KTH-UrbanT/spara.git .
+    - git status
     - ls
   artifacts:
     paths:
