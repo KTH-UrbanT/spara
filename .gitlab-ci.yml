@@ -34,6 +34,9 @@ before_script:
   - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
   - ssh-keyscan -H $REMOTE_HOST >> ~/.ssh/known_hosts
 
+  # Make sure folders for env files exist
+  - mkdir -p message-service llm-service
+
   # inject .env files
   - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
   - echo "$LLM_SERVICE_ENV"     > llm-service/.env
