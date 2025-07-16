@@ -20,9 +20,6 @@ variables:
 # The 'container_setup' job initializes the Git repository, installs necessary dependencies,
 # and prepares the environment for testing and deployment.
 before_script:
-  # install needed CLIs
-  - apk add --no-cache git openssh
-  - apk add --no-cache git openssh-client rsync
 
   # prepare SSH dir and keys
   - mkdir -p ~/.ssh
@@ -47,6 +44,9 @@ prepare_environment:
   stage: prepare
   image: alpine:latest
   script:
+    # install needed CLIs
+    - apk add --no-cache git openssh
+  
     - ls
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
     - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git .
@@ -219,6 +219,7 @@ sync_staging:
     name: staging
     url: https://test.sparabot.com
   script:
+    - apk add --no-cache git openssh-client rsync
     - echo "Preparing and syncing files to remote server"
     # Stop and remove any running containers (only if compose file exists)
     - |
@@ -259,6 +260,7 @@ deploy_test_env_staging:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+    - apk add --no-cache git openssh-client rsync
     - echo "Deploying to test staging server"
     # Install Docker if not installed, load tested images, and start containers
     - |
@@ -303,6 +305,7 @@ tag_sub_modules:
     #- test_llm_service
     #- test_frontend
   script:
+    - apk add --no-cache git openssh-client rsync
     - |
       echo "Tested submodule tags:"
       echo "Message Service: $MESSAGE_SERVICE_TAG"
