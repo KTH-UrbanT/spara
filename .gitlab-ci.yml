@@ -73,6 +73,7 @@ prepare_environment:
 
   artifacts:
     paths:
+      - .git/
       - message-service/
       - llm-service/
       - frontend/
