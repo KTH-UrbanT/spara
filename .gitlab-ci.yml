@@ -250,7 +250,7 @@ sync_staging:
     - git branch
     - git status
     - cd ../
-    
+
     - echo "Preparing and syncing files to remote server"
     # Stop and remove any running containers (only if compose file exists)
     - |
@@ -282,6 +282,7 @@ sync_staging:
 deploy_test_env_staging:
   needs:
     - sync_staging
+    - prepare_environment
   stage: deploy
   image: alpine:3.18
   environment:
@@ -339,6 +340,7 @@ tagging:
   stage: deploy
   image: alpine/git:2.40.1
   needs:
+    - build_images
     - deploy_test_env_staging
   script:
 
