@@ -54,18 +54,11 @@ prepare_environment:
   stage: prepare
   image: alpine:latest
   script:
-    # Clean any existing repo and submodule directories first
-    - ls
-    - ls ../
-    #- git status
-    #- rm -rf message-service llm-service frontend shared modules .git
-    #- ls
-    #- git status
-    # Clone the main repo and all submodules recursively using the correct SSH key
     - cd ../
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-    - git clone --recursive git@github.com:KTH-UrbanT/spara.git
+    - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git
     - cd spara
+    - git checkout "$CI_COMMIT_REF_NAME"
     - git status
     - ls
   artifacts:
@@ -96,6 +89,8 @@ build_images:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+
+    - cd ../spara
 
     - ls
     - ls message-service
@@ -138,6 +133,9 @@ test_all_services:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+
+    - cd ../spara
+    
     # Load all Docker images
     - docker load -i message-service.tar
     - docker load -i llm-service.tar
