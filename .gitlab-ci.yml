@@ -53,13 +53,15 @@ prepare_environment:
     - rm -rf message-service llm-service frontend
     - rm -f message-service.tar llm-service.tar frontend.tar
     # Get submodules
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
-    - git status
-    # Lock submodule SHAs for the test branch
-    - git add message-service llm-service frontend
-    - git commit -m "Lock submodule SHAs for test branch" || echo "No changes to commit"
-    - git status
     - ls
+    - git status
+    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
+    #- git status
+    # Lock submodule SHAs for the test branch
+    #- git add message-service llm-service frontend
+    #- git commit -m "Lock submodule SHAs for test branch" || echo "No changes to commit"
+    #- git status
+    #- ls
   artifacts:
     paths:
       - message-service/
