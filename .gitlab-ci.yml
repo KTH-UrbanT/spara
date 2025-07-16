@@ -140,9 +140,16 @@ test_all_services:
       set -e
       export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
       
+      # Initialize combined_tags.env file
+      touch combined_tags.env
+      
+      # Re-initialize submodules as git repositories
+      echo "Re-initializing submodules as git repositories..."
+      
       # Tag message-service
       cd message-service
-      git remote set-url origin git@github.com:KTH-UrbanT/spara-message-service.git
+      git init
+      git remote add origin git@github.com:KTH-UrbanT/spara-message-service.git
       git fetch origin
       git checkout dev
       MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
@@ -154,7 +161,8 @@ test_all_services:
       
       # Tag llm-service
       cd llm-service
-      git remote set-url origin git@github.com:KTH-UrbanT/spara-llm-service.git
+      git init
+      git remote add origin git@github.com:KTH-UrbanT/spara-llm-service.git
       git fetch origin
       git checkout dev
       LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
@@ -166,7 +174,8 @@ test_all_services:
       
       # Tag frontend
       cd frontend
-      git remote set-url origin git@github.com:KTH-UrbanT/spara-frontend.git
+      git init
+      git remote add origin git@github.com:KTH-UrbanT/spara-frontend.git
       git fetch origin
       git checkout dev
       FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
