@@ -62,7 +62,7 @@ prepare_environment:
     #- git status
     # Clone the main repo and all submodules recursively using the correct SSH key
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-    - $GIT_SSH_COMMAND git clone --recursive git@github.com:KTH-UrbanT/spara.git
+    - git clone --recursive git@github.com:KTH-UrbanT/spara.git
     - git status
     - ls
   artifacts:
