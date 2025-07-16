@@ -54,6 +54,7 @@ prepare_environment:
     - rm -f message-service.tar llm-service.tar frontend.tar
     # Get submodules
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
+    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule absorbgitdirs --recursive
     # Lock submodule SHAs for the test branch
     - git add message-service llm-service frontend
     - git commit -m "Lock submodule SHAs for test branch" || echo "No changes to commit"
@@ -142,9 +143,9 @@ test_all_services:
 
     # Tag message-service
     - cd message-service
-    - git remote add origin git@github.com:KTH-UrbanT/spara-message-service.git
+    #- git remote add origin git@github.com:KTH-UrbanT/spara-message-service.git
     - git fetch origin
-    - git checkout dev
+    #- git checkout dev
     - MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - echo "Tagging message-service with '$MESSAGE_TAG'"
     - git tag -a "$MESSAGE_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
@@ -154,9 +155,9 @@ test_all_services:
 
     # Tag llm-service
     - cd llm-service
-    - git remote add origin git@github.com:KTH-UrbanT/spara-llm-service.git
+    #- git remote add origin git@github.com:KTH-UrbanT/spara-llm-service.git
     - git fetch origin
-    - git checkout dev
+    #- git checkout dev
     - LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - echo "Tagging llm-service with '$LLM_TAG"
     - git tag -a "$LLM_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
@@ -166,9 +167,9 @@ test_all_services:
 
     # Tag frontend
     - cd frontend
-    - git remote add origin git@github.com:KTH-UrbanT/spara-frontend.git
+    #- git remote add origin git@github.com:KTH-UrbanT/spara-frontend.git
     - git fetch origin
-    - git checkout dev
+    #- git checkout dev
     - FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - echo "Tagging frontend with '$FRONTEND_TAG'"
     - git tag -a "$FRONTEND_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
