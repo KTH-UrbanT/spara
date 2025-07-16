@@ -62,6 +62,9 @@ prepare_environment:
       - message-service/
       - llm-service/
       - frontend/
+    untracked: false
+    when: on_success
+    expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -93,7 +96,7 @@ build_images:
       - message-service.tar
       - llm-service.tar
       - frontend.tar
-    expire_in: 24 hour
+    expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
