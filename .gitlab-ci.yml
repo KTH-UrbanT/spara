@@ -242,6 +242,15 @@ sync_staging:
     name: staging
     url: https://test.sparabot.com
   script:
+
+    - ls
+    - git status
+    - git submodule status
+    - cd frontend
+    - git branch
+    - git status
+    - cd ../
+    
     - echo "Preparing and syncing files to remote server"
     # Stop and remove any running containers (only if compose file exists)
     - |
@@ -282,6 +291,15 @@ deploy_test_env_staging:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+
+    - ls
+    - git status
+    - git submodule status
+    - cd frontend
+    - git branch
+    - git status
+    - cd ../
+
     - echo "Deploying to test staging server"
     # Install Docker if not installed, load tested images, and start containers
     - |
@@ -316,27 +334,31 @@ deploy_test_env_staging:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Collect all submodule tags after testing
-tag_sub_modules:
+# Tag the submodules and the assembly repo after successful tests.
+tagging:
   stage: deploy
   image: alpine/git:2.40.1
   needs:
     - deploy_test_env_staging
-    #- test_message_service
-    #- test_llm_service
-    #- test_frontend
   script:
-    - |
-      echo "Tested submodule tags:"
-      echo "Message Service: $MESSAGE_SERVICE_TAG"
-      echo "LLM Service: $LLM_SERVICE_TAG"
-      echo "Frontend: $FRONTEND_TAG"
-    # Optionally create a release tag for the assembly repo
-    - |
-      ASSEMBLY_TAG="release-$(date +%Y%m%d-%H%M%S)"
-      echo "Creating assembly release tag: $ASSEMBLY_TAG"
-      export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-      git tag -a "$ASSEMBLY_TAG" -m "Assembly release with tested submodules: MS:$MESSAGE_SERVICE_TAG, LLM:$LLM_SERVICE_TAG, FE:$FRONTEND_TAG"
-      git push origin "$ASSEMBLY_TAG"
+
+    - ls
+    - git status
+    - git submodule status
+    - cd frontend
+    - git branch
+    - git status
+    - cd ../
+
+    - echo "Tested submodule tags ";
+    - echo "Message Service  $MESSAGE_SERVICE_TAG";
+    - echo "LLM Service  $LLM_SERVICE_TAG";
+    - echo "Frontend  $FRONTEND_TAG"
+    
+    - ASSEMBLY_TAG="release-$(date +%Y%m%d-%H%M%S)"; 
+    - echo "Creating assembly release tag $ASSEMBLY_TAG"; 
+    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"; 
+    - git tag -a "$ASSEMBLY_TAG" -m "Assembly release with tested submodules MS $MESSAGE_SERVICE_TAG, LLM $LLM_SERVICE_TAG, FE $FRONTEND_TAG";
+    - git push origin "$ASSEMBLY_TAG"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
