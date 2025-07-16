@@ -56,7 +56,8 @@ prepare_environment:
     - ls
     - git status
     #- GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
-    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
+    # We know that --force is safe.
+    - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive --force
     - git status
     # Lock submodule SHAs for the test branch
     #- git add message-service llm-service frontend
