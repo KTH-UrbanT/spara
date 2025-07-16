@@ -54,6 +54,7 @@ prepare_environment:
   stage: prepare
   image: alpine:latest
   script:
+    - ls
     - cd ../
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
     - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git
@@ -135,7 +136,7 @@ test_all_services:
   script:
 
     - cd ../spara
-    
+
     # Load all Docker images
     - docker load -i message-service.tar
     - docker load -i llm-service.tar
