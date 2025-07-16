@@ -231,6 +231,19 @@ cleanup_remote_disk:
     - test_all_services
   script:
     - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
+
+    # Stop and remove any running containers (only if compose file exists)
+    - |
+      $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<EOF
+        if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
+          cd $REMOTE_PATH/infra
+          sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true
+          echo "Stopped existing containers."
+        else
+          echo "No existing containers to stop or compose file not found."
+        fi
+      EOF
+      
     - |
       $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<'EOF'
         echo "Disk usage before cleanup:"
@@ -281,18 +294,6 @@ sync_staging:
     - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
 
     - echo "Preparing and syncing files to remote server"
-
-    # Stop and remove any running containers (only if compose file exists)
-    - |
-      $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<EOF
-        if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
-          cd $REMOTE_PATH/infra
-          sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true
-          echo "Stopped existing containers."
-        else
-          echo "No existing containers to stop or compose file not found."
-        fi
-      EOF
 
     # Clean the deployment folder
     - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
