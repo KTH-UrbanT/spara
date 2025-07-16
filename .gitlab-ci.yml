@@ -144,7 +144,7 @@ test_all_services:
     # Tag message-service
     - cd message-service
     #- git remote add origin git@github.com:KTH-UrbanT/spara-message-service.git
-    - git fetch origin
+    #- git fetch origin
     #- git checkout dev
     - MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - echo "Tagging message-service with '$MESSAGE_TAG'"
@@ -156,7 +156,7 @@ test_all_services:
     # Tag llm-service
     - cd llm-service
     #- git remote add origin git@github.com:KTH-UrbanT/spara-llm-service.git
-    - git fetch origin
+    #- git fetch origin
     #- git checkout dev
     - LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - echo "Tagging llm-service with '$LLM_TAG"
@@ -168,7 +168,7 @@ test_all_services:
     # Tag frontend
     - cd frontend
     #- git remote add origin git@github.com:KTH-UrbanT/spara-frontend.git
-    - git fetch origin
+    #- git fetch origin
     #- git checkout dev
     - FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - echo "Tagging frontend with '$FRONTEND_TAG'"
