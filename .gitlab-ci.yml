@@ -57,12 +57,12 @@ prepare_environment:
     - git status
     #- GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --init --recursive
     - GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no" git submodule update --recursive
-    #- git status
+    - git status
     # Lock submodule SHAs for the test branch
     #- git add message-service llm-service frontend
     #- git commit -m "Lock submodule SHAs for test branch" || echo "No changes to commit"
     #- git status
-    #- ls
+    - ls
   artifacts:
     paths:
       - message-service/
@@ -90,6 +90,12 @@ build_images:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+
+    - ls
+    - ls message-service
+    - ls llm-service
+    - ls frontend
+
     - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache
 
     - docker save -o message-service.tar message-service:test
