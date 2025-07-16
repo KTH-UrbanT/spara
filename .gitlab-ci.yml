@@ -83,7 +83,8 @@ build_images:
   stage: build
   image: docker:24.0-cli
   needs: 
-    - prepare_environment
+    - job: prepare_environment
+      artifacts: true
   services:
     - docker:dind
   variables:
