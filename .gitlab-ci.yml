@@ -242,15 +242,12 @@ cleanup_remote_disk:
         else
           echo "No existing containers to stop or compose file not found."
         fi
-      EOF
-      
-    - |
-      $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<'EOF'
+        
         echo "Disk usage before cleanup:"
         df -h /
         echo "Cleaning up Docker..."
-        sudo docker system prune -af || true
-        sudo docker volume prune -f || true
+        sudo docker system prune -af
+        sudo docker volume prune -f
         echo "Cleaning up /tmp and old logs..."
         sudo rm -rf /tmp/*
         sudo find /var/log -type f -name "*.gz" -delete
