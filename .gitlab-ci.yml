@@ -358,6 +358,7 @@ deploy_test_env_staging:
     - |
       ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
         set -e
+
         # Install Docker and Compose if not already present
         if ! command -v docker &> /dev/null; then
           echo "Installing Docker and docker compose plugin..."
@@ -374,16 +375,56 @@ deploy_test_env_staging:
           sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
         fi
         docker compose version
+        
         # CD into the remote path
         cd $REMOTE_PATH
         # Load the tested Docker images from tar files
-        sudo docker load -i message-service.tar
-        sudo docker load -i llm-service.tar
-        sudo docker load -i frontend.tar
-        # Start services with CI overlay using the loaded images
+        for image in message-service llm-service frontend; do
+          sudo docker load -i "$image.tar"
+        done
+
+        # Start services with retry logic and better error handling
         cd infra
-        sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d
+        for attempt in 1 2 3; do
+          echo "Deployment attempt \$attempt..."
+          if sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps; then
+            echo "Services started successfully"
+            break
+          else
+            echo "Attempt \$attempt failed, waiting 30 seconds..."
+            sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true
+            sleep 30
+            if [ \$attempt -eq 3 ]; then
+              echo "All deployment attempts failed"
+              exit 1
+            fi
+          fi
+        done
       EOF
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+# Add a new validation job
+validate_deployment:
+  stage: deploy
+  image: alpine:3.18
+  resource_group: spara-test
+  needs:
+    - deploy_test_env_staging
+  script:
+    - apk add --no-cache curl
+    - |
+      echo "Validating deployment..."
+      for i in {1..30}; do
+        if curl -f -s https://test.sparabot.com/health > /dev/null; then
+          echo "Deployment validated successfully"
+          exit 0
+        fi
+        echo "Attempt $i: Service not ready, waiting..."
+        sleep 10
+      done
+      echo "Deployment validation failed"
+      exit 1
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -393,6 +434,7 @@ tagging:
   image: alpine:3.18
   resource_group: spara-test
   needs:
+    - validate_deployment
     - prepare_environment
     - build_images
     - deploy_test_env_staging
@@ -418,4 +460,4 @@ tagging:
     - git tag -a "$ASSEMBLY_TAG" -m "Assembly release with tested submodules MS $MESSAGE_SERVICE_TAG, LLM $LLM_SERVICE_TAG, FE $FRONTEND_TAG";
     - git push origin "$ASSEMBLY_TAG"
   rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//' 
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
