@@ -81,7 +81,6 @@ prepare_environment:
       - shared/
       - infra/
     untracked: false
-    when: on_success
     expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -94,8 +93,7 @@ build_images:
   image: docker:24.0-cli
   resource_group: spara-test
   needs: 
-    - job: prepare_environment
-      artifacts: true
+    - prepare_environment
   services:
     - docker:dind
   variables:
@@ -133,14 +131,12 @@ test_all_services:
   image: docker:24.0-cli
   resource_group: spara-test
   needs:
-    - job: build_images
-      artifacts: true
-    - job: prepare_environment
-      artifacts: true
+    - build_images
+    - prepare_environment
   services:
     - docker:dind
   variables:
-    GIT_STRATEGY: none # Don't clone the repo, rely on artifacts
+    GIT_STRATEGY: none # Don't clone the repo, rely on artifacts (might be redundant copy)
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
@@ -396,6 +392,7 @@ tagging:
   image: alpine:3.18
   resource_group: spara-test
   needs:
+    - prepare_environment
     - build_images
     - deploy_test_env_staging
   script:
