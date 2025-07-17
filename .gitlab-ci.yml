@@ -333,6 +333,7 @@ deploy_test_env_staging:
   needs:
     - sync_staging
     - prepare_environment
+    - cleanup_remote_disk
   stage: deploy
   image: alpine:3.18
   resource_group: spara-test
@@ -395,6 +396,7 @@ tagging:
     - prepare_environment
     - build_images
     - deploy_test_env_staging
+    - cleanup_remote_disk
   script:
 
     - ls
