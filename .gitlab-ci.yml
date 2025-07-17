@@ -4,7 +4,9 @@ stages:
   - prepare
   - build
   - test
+  - prepare
   - deploy
+  - finish
 
 variables:
   COMPOSE_FILE_TEST: docker-compose.test.yml
@@ -267,7 +269,7 @@ test_all_services:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 cleanup_remote_disk:
-  stage: deploy
+  stage: prepare
   image: alpine:3.18
   resource_group: spara-test
   needs:
@@ -277,7 +279,6 @@ cleanup_remote_disk:
   script: *cleanup_script
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
 
 # Syncs files, .envs, and tarballs to the remote server and ensures directories exist.
 # Here we connect to the test remote server, stop any running containers, clean the deployment folder,
@@ -289,7 +290,7 @@ sync_staging:
     - prepare_environment
     - test_all_services
     - cleanup_remote_disk
-  stage: deploy
+  stage: prepare
   image: alpine:3.18
   resource_group: spara-test
   script:
@@ -442,15 +443,15 @@ validate_deployment:
 
 # Tag the submodules and the assembly repo after successful tests.
 tagging:
-  stage: deploy
+  stage: finish
   image: alpine:3.18
   resource_group: spara-test
   needs:
     - validate_deployment
     - prepare_environment
     - build_images
-    - deploy_test_env_staging
-    - cleanup_remote_disk
+    #- deploy_test_env_staging
+    #- cleanup_remote_disk
   script:
 
     - ls
@@ -476,7 +477,7 @@ tagging:
 
 # Cleanup job that runs only on pipeline failure
 cleanup_on_failure:
-  stage: deploy
+  stage: finish
   image: alpine:3.18
   resource_group: spara-test
   script: *cleanup_script
