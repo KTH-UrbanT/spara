@@ -5,9 +5,8 @@
 # Docker image for each job.
 
 stages:
-  - prepare_gitlab
+  - prepare
   - test
-  - prepare_remote
   - deploy
   - finish
 
@@ -101,7 +100,7 @@ before_script:
 # We do this since GitHub allways has the latest versions, and pulling from
 # GitLab can lead to issues with submodule SHAs.
 prepare_environment:
-  stage: prepare_gitlab
+  stage: prepare
   image: alpine:3.18
   resource_group: spara-test
   script:
@@ -136,11 +135,21 @@ prepare_environment:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
+# Cleanup job that runs after the test stage to
+# stop any running containers and clean up the disk.
+cleanup_remote:
+  stage: prepare
+  image: alpine:3.18
+  resource_group: spara-test
+  script: *cleanup_script
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
 # Build images
 # Here we build the Docker images for the services, using the Docker Compose file,
 # and save them as tar files for later use (to speed up deployment).
 build_images:
-  stage: prepare_gitlab
+  stage: prepare
   image: docker:24.0-cli
   resource_group: spara-test
   needs: 
@@ -244,20 +253,6 @@ test_all_services:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Cleanup job that runs after the test stage to
-# stop any running containers and clean up the disk.
-cleanup_remote:
-  stage: prepare_remote
-  image: alpine:3.18
-  resource_group: spara-test
-  needs:
-    - build_images
-    - prepare_environment
-    - test_all_services
-  script: *cleanup_script
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
 # Syncs files, .envs, and tarballs to the remote server and ensures directories exist.
 # Here we connect to the test remote server, stop any running containers, clean the deployment folder,
 # and copy the necessary files including the Docker Compose file, .env files, and tarballs
@@ -268,7 +263,7 @@ sync_staging:
     - prepare_environment
     - test_all_services
     - cleanup_remote
-  stage: prepare_remote
+  stage: deploy
   image: alpine:3.18
   resource_group: spara-test
   script:
