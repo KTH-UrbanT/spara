@@ -102,7 +102,7 @@ before_script:
 prepare_environment:
   stage: prepare
   image: alpine:3.18
-  resource_group: spara-test
+  resource_group: gitlab
   script:
   
     - ls
@@ -140,7 +140,7 @@ prepare_environment:
 cleanup_remote:
   stage: prepare
   image: alpine:3.18
-  resource_group: spara-test
+  resource_group: remote_test
   script: *cleanup_script
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -151,7 +151,7 @@ cleanup_remote:
 build_images:
   stage: prepare
   image: docker:24.0-cli
-  resource_group: spara-test
+  resource_group: gitlab
   needs: 
     - prepare_environment
   services:
@@ -181,7 +181,7 @@ build_images:
 test_all_services:
   stage: test
   image: docker:24.0-cli
-  resource_group: spara-test
+  resource_group: gitlab
   needs:
     - build_images
     - prepare_environment
@@ -265,7 +265,7 @@ sync_staging:
     - cleanup_remote
   stage: deploy
   image: alpine:3.18
-  resource_group: spara-test
+  resource_group: remote_test
   script:
 
     - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
@@ -301,7 +301,7 @@ deploy_test_env_staging:
     - cleanup_remote
   stage: deploy
   image: alpine:3.18
-  resource_group: spara-test
+  resource_group: remote_test
   variables:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
@@ -379,7 +379,6 @@ deploy_test_env_staging:
 cleanup_tar_files:
   stage: deploy
   image: alpine:3.18
-  resource_group: spara-test
   needs:
     - deploy_test_env_staging
   script:
@@ -392,7 +391,7 @@ cleanup_tar_files:
 validate_deployment:
   stage: deploy
   image: alpine:3.18
-  resource_group: spara-test
+  resource_group: remote_test
   needs:
     - deploy_test_env_staging
   script:
@@ -416,7 +415,6 @@ validate_deployment:
 tagging:
   stage: finish
   image: alpine:3.18
-  resource_group: spara-test
   needs:
     - validate_deployment
     - prepare_environment
@@ -440,7 +438,6 @@ tagging:
 cleanup_on_failure:
   stage: finish
   image: alpine:3.18
-  resource_group: spara-test
   script: *cleanup_script
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
