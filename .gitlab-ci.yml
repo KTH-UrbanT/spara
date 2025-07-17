@@ -49,6 +49,7 @@ before_script:
 prepare_environment:
   stage: prepare
   image: alpine:3.18
+  resource_group: spara-test
   script:
   
     - ls
@@ -91,6 +92,7 @@ prepare_environment:
 build_images:
   stage: build
   image: docker:24.0-cli
+  resource_group: spara-test
   needs: 
     - job: prepare_environment
       artifacts: true
@@ -129,6 +131,7 @@ build_images:
 test_all_services:
   stage: test
   image: docker:24.0-cli
+  resource_group: spara-test
   needs:
     - job: build_images
       artifacts: true
@@ -225,6 +228,7 @@ test_all_services:
 cleanup_remote_disk:
   stage: deploy
   image: alpine:3.18
+  resource_group: spara-test
   needs:
     - build_images
     - prepare_environment
@@ -232,9 +236,11 @@ cleanup_remote_disk:
   script:
     - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
 
-    # Stop and remove any running containers (only if compose file exists)
     - |
-      $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<EOF
+      $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<'EOF'
+        set -e
+
+        echo "Stopping containers if compose file exists..."
         if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
           cd $REMOTE_PATH/infra
           sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true
@@ -242,18 +248,28 @@ cleanup_remote_disk:
         else
           echo "No existing containers to stop or compose file not found."
         fi
-        
+
         echo "Disk usage before cleanup:"
         df -h /
-        echo "Cleaning up Docker..."
-        sudo docker system prune -af
-        sudo docker volume prune -f
+
+        echo "Targeted Docker cleanup..."
+        # Remove stopped containers only
+        sudo docker rm $(sudo docker ps -aq -f status=exited) 2>/dev/null || true
+
+        # Remove dangling (untagged) images
+        sudo docker rmi $(sudo docker images -f dangling=true -q) 2>/dev/null || true
+
+        # Remove dangling volumes
+        sudo docker volume rm $(sudo docker volume ls -qf dangling=true) 2>/dev/null || true
+
         echo "Cleaning up /tmp and old logs..."
         sudo rm -rf /tmp/*
         sudo find /var/log -type f -name "*.gz" -delete
         sudo find /var/log -type f -name "*.1" -delete
+
         echo "Disk usage after cleanup:"
         df -h /
+
         USAGE=$(df / | awk 'NR==2 {print $5}' | tr -d '%')
         if [ "$USAGE" -gt 90 ]; then
           echo "ERROR: Root filesystem is still over 90% full. Please free up space before deploying."
@@ -262,6 +278,7 @@ cleanup_remote_disk:
       EOF
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
 
 # Syncs files, .envs, and tarballs to the remote server and ensures directories exist.
 # Here we connect to the test remote server, stop any running containers, clean the deployment folder,
@@ -275,6 +292,7 @@ sync_staging:
     - cleanup_remote_disk
   stage: deploy
   image: alpine:3.18
+  resource_group: spara-test
   environment:
     name: staging
     url: https://test.sparabot.com
@@ -320,6 +338,7 @@ deploy_test_env_staging:
     - prepare_environment
   stage: deploy
   image: alpine:3.18
+  resource_group: spara-test
   environment:
     name: staging
     url: https://test.sparabot.com
@@ -374,6 +393,7 @@ deploy_test_env_staging:
 tagging:
   stage: deploy
   image: alpine:3.18
+  resource_group: spara-test
   needs:
     - build_images
     - deploy_test_env_staging
