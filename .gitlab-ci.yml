@@ -263,7 +263,8 @@ cleanup_remote_disk:
         sudo docker volume rm $(sudo docker volume ls -qf dangling=true) 2>/dev/null || true
 
         echo "Cleaning up /tmp and old logs..."
-        sudo rm -rf /tmp/*
+        # Only delete files in /tmp that are older than 7 days and not in use
+        find /tmp -mtime +7 -and  
         sudo find /var/log -type f -name "*.gz" -delete
         sudo find /var/log -type f -name "*.1" -delete
 
