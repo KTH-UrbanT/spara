@@ -138,7 +138,7 @@ prepare_environment:
 # Cleanup job that runs after the test stage to
 # stop any running containers and clean up the disk.
 cleanup_remote:
-  stage: remote_test
+  stage: prepare
   image: alpine:3.18
   resource_group: remote_test
   script: *cleanup_script
@@ -443,5 +443,4 @@ cleanup_on_failure:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: on_failure
   allow_failure: true
-
 
