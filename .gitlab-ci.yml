@@ -380,6 +380,19 @@ deploy_test_env_staging:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
+# Clean up the tar files to speed up future deployments
+cleanup_tar_files:
+  stage: deploy
+  image: alpine:3.18
+  resource_group: spara-test
+  needs:
+    - deploy_test_env_staging
+  script:
+    - echo "Cleaning up tar files on remote server"
+    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "rm -f $REMOTE_PATH/*.tar"
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
 # Add a new validation job
 validate_deployment:
   stage: deploy
