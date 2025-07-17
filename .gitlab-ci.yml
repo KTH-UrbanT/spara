@@ -418,4 +418,4 @@ tagging:
     - git tag -a "$ASSEMBLY_TAG" -m "Assembly release with tested submodules MS $MESSAGE_SERVICE_TAG, LLM $LLM_SERVICE_TAG, FE $FRONTEND_TAG";
     - git push origin "$ASSEMBLY_TAG"
   rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//' 
