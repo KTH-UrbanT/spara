@@ -264,7 +264,7 @@ cleanup_remote_disk:
 
         echo "Cleaning up /tmp and old logs..."
         # Only delete files in /tmp that are older than 7 days and not in use
-        find /tmp -mtime +7 -and  
+        find /tmp -mtime +7 -and -not -exec fuser -s {} ';' -exec rm -rf {} +
         sudo find /var/log -type f -name "*.gz" -delete
         sudo find /var/log -type f -name "*.1" -delete
 
