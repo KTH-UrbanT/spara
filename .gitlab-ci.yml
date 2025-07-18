@@ -399,7 +399,7 @@ tagging:
   script:
     - set -euo pipefail
 
-    - echo "Tested submodule tags: $MESSAGE_SERVICE_TAG, $LLM_SERVICE_TAG, $FRONTEND_TAG"
+    - echo "Tested submodule tags $MESSAGE_SERVICE_TAG, $LLM_SERVICE_TAG, $FRONTEND_TAG"
     
     # Fresh clone for tagging (full depth needed for git operations)
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
