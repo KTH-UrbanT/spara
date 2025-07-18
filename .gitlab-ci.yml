@@ -4,6 +4,14 @@
 # is needed, since the GitLab runners starts with a fresh
 # Docker image for each job.
 
+# Workflow rules to cancel older pipelines when new commits are pushed
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+      auto_cancel:
+        on_new_commit: interruptible
+    - when: never
+
 stages:
   - prepare
   - test
@@ -104,6 +112,7 @@ prepare_environment:
   stage: prepare
   image: alpine:3.18
   resource_group: gitlab
+  interruptible: true
   script:
     - set -euo pipefail
     - ls
@@ -130,13 +139,158 @@ prepare_environment:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Cleanup job that runs after the test stage to
-# stop any running containers and clean up the disk.
-cleanup_remote:
-  stage: prepare
+# Combined remote operations - cleanup, sync, deploy, and validate
+# This job holds the remote_test resource lock from beginning to end
+# Only runs after tests pass successfully on GitLab servers
+deploy_and_validate_remote:
+  needs:
+    - build_images
+    - prepare_environment
+    - test_all_services  # Wait for tests to pass before deploying
+  stage: deploy
   image: alpine:3.18
   resource_group: remote_test
-  script: *cleanup_script
+  interruptible: false  # Don't interrupt deployment once started
+  script:
+    - set -euo pipefail
+    
+    # Step 1: Cleanup (from cleanup_remote)
+    - echo "=== CLEANUP PHASE ==="
+    - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
+    - |
+      $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<EOF
+        set -euo pipefail
+
+        echo "Stopping containers if compose file exists..."
+        if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
+          cd $REMOTE_PATH/infra
+          sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true
+          echo "Stopped existing containers."
+        else
+          echo "No existing containers to stop or compose file not found."
+        fi
+
+        echo "Disk usage before cleanup:"
+        df -h /
+
+        echo "Targeted Docker cleanup..."
+        sudo docker rm \$(sudo docker ps -aq -f status=exited) 2>/dev/null || true
+        sudo docker rmi \$(sudo docker images -f dangling=true -q) 2>/dev/null || true
+        sudo docker volume rm \$(sudo docker volume ls -qf dangling=true) 2>/dev/null || true
+
+        echo "Cleaning up /tmp and old logs..."
+        find /tmp -mtime +7 -and -not -exec fuser -s {} ';' -exec rm -rf {} +
+        sudo find /var/log -type f -name "*.gz" -delete
+        sudo find /var/log -type f -name "*.1" -delete
+
+        echo "Disk usage after cleanup:"
+        df -h /
+
+        USAGE=\$(df / | awk 'NR==2 {print \$5}' | tr -d '%')
+        if [ "\$USAGE" -gt 90 ]; then
+          echo "ERROR: Root filesystem is still over 90% full. Please free up space before deploying."
+          exit 1
+        fi
+      EOF
+
+    # Step 2: Sync (from sync_staging)
+    - echo "=== SYNC PHASE ==="
+    - echo "Preparing and syncing files to remote server"
+    - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
+    - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
+    - rsync -avz -e "$SSH_CMD" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
+    - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service $REMOTE_PATH/llm-service $REMOTE_PATH/frontend"
+    - rsync -avz -e "$SSH_CMD" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
+    - rsync -avz -e "$SSH_CMD" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
+    - rsync -avz -e "$SSH_CMD" message-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" llm-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+
+    # Step 3: Deploy (from deploy_test_env_staging)
+    - echo "=== DEPLOY PHASE ==="
+    - echo "Deploying to test staging server"
+    - |
+      DOCKER_STATUS=$(ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
+      echo "Docker status: $DOCKER_STATUS"
+      
+      if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
+        echo "Installing Docker..."
+        ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<'EOF'
+          set -euo pipefail
+          echo "Installing Docker and docker compose plugin..."
+          sudo apt update
+          sudo apt install -y ca-certificates curl gnupg lsb-release
+          sudo install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          sudo chmod a+r /etc/apt/keyrings/docker.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          sudo apt update
+          sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      EOF
+      else
+        echo "Docker already installed, skipping installation"
+      fi
+    
+    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST 'docker compose version'
+    
+    - echo "Loading Docker images..."
+    - |
+      ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
+        set -euo pipefail
+        cd $REMOTE_PATH
+        sudo docker load -i message-service.tar
+        sudo docker load -i llm-service.tar
+        sudo docker load -i frontend.tar
+      EOF
+    
+    - echo "Starting deployment with retry logic..."
+    - |
+      for attempt in 1 2 3; do
+        echo "Deployment attempt $attempt..."
+        
+        if ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
+          echo "Services started successfully on attempt $attempt"
+          break
+        else
+          echo "Attempt $attempt failed"
+          if [ $attempt -lt 3 ]; then
+            echo "Cleaning up and waiting 30 seconds before retry..."
+            ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
+            sleep 30
+          else
+            echo "All deployment attempts failed"
+            exit 1
+          fi
+        fi
+      done
+    
+    - echo "Verifying deployment..."
+    - sleep 10
+    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
+
+    # Step 4: Validate (from validate_deployment)
+    - echo "=== VALIDATION PHASE ==="
+    - apk add --no-cache curl
+    - |
+      echo "Validating deployment..."
+      for i in {1..30}; do
+        if curl -f -s https://test.sparabot.com/health > /dev/null; then
+          echo "Deployment validated successfully"
+          break
+        fi
+        echo "Attempt $i: Service not ready, waiting..."
+        sleep 10
+        if [ $i -eq 30 ]; then
+          echo "Deployment validation failed"
+          exit 1
+        fi
+      done
+
+    # Step 5: Cleanup tar files (from cleanup_tar_files)
+    - echo "=== CLEANUP TAR FILES ==="
+    - echo "Cleaning up tar files on remote server"
+    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "rm -f $REMOTE_PATH/*.tar"
+    
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -147,6 +301,7 @@ build_images:
   stage: prepare
   image: docker:24.0-cli
   resource_group: gitlab
+  interruptible: true
   needs: 
     - prepare_environment
   services:
@@ -178,6 +333,7 @@ test_all_services:
   stage: test
   image: docker:24.0-cli
   resource_group: gitlab
+  interruptible: true
   needs:
     - build_images
     - prepare_environment
@@ -227,174 +383,15 @@ test_all_services:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Syncs files, .envs, and tarballs to the remote server and ensures directories exist.
-# Here we connect to the test remote server, stop any running containers, clean the deployment folder,
-# and copy the necessary files including the Docker Compose file, .env files, and tarballs
-# for the tested Docker images.
-sync_staging:
-  needs:
-    - build_images
-    - prepare_environment
-    - test_all_services
-    - cleanup_remote
-  stage: deploy
-  image: alpine:3.18
-  resource_group: remote_test
-  script:
-    - set -euo pipefail
 
-    - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
-
-    - echo "Preparing and syncing files to remote server"
-
-    # Clean the deployment folder
-    - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
-    # Ensure base directory exists
-    - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
-
-    # Copy the infra folder to the remote server
-    - rsync -avz -e "$SSH_CMD" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
-
-    # Create directories for submodules if they don't exist
-    - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service $REMOTE_PATH/llm-service $REMOTE_PATH/frontend"
-
-    # Copy submodule directories with .env files
-    - rsync -avz -e "$SSH_CMD" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
-    - rsync -avz -e "$SSH_CMD" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
-    # Copy the tested Docker images (tar files) to the remote server
-    - rsync -avz -e "$SSH_CMD" message-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" llm-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Deploys the application: installs Docker if needed, loads images, and starts containers.
-deploy_test_env_staging:
-  needs:
-    - sync_staging
-    - prepare_environment
-    - cleanup_remote
-  stage: deploy
-  image: alpine:3.18
-  resource_group: remote_test
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
-    - set -euo pipefail
-
-    - echo "Deploying to test staging server"
-    
-    # Check if Docker is installed and install if needed
-    - |
-      DOCKER_STATUS=$(ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
-      echo "Docker status: $DOCKER_STATUS"
-      
-      if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
-        echo "Installing Docker..."
-        ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<'EOF'
-          set -euo pipefail
-          echo "Installing Docker and docker compose plugin..."
-          sudo apt update
-          sudo apt install -y ca-certificates curl gnupg lsb-release
-          sudo install -m 0755 -d /etc/apt/keyrings
-          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-          sudo chmod a+r /etc/apt/keyrings/docker.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-          sudo apt update
-          sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-      EOF
-      else
-        echo "Docker already installed, skipping installation"
-      fi
-    
-    # Verify Docker installation
-    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST 'docker compose version'
-    
-    # Load Docker images
-    - echo "Loading Docker images..."
-    - |
-      ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
-        set -euo pipefail
-        cd $REMOTE_PATH
-        sudo docker load -i message-service.tar
-        sudo docker load -i llm-service.tar
-        sudo docker load -i frontend.tar
-      EOF
-    
-    # Deploy with retry logic
-    - echo "Starting deployment with retry logic..."
-    - |
-      for attempt in 1 2 3; do
-        echo "Deployment attempt $attempt..."
-        
-        if ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
-          echo "Services started successfully on attempt $attempt"
-          break
-        else
-          echo "Attempt $attempt failed"
-          if [ $attempt -lt 3 ]; then
-            echo "Cleaning up and waiting 30 seconds before retry..."
-            ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
-            sleep 30
-          else
-            echo "All deployment attempts failed"
-            exit 1
-          fi
-        fi
-      done
-    
-    # Verify deployment
-    - echo "Verifying deployment..."
-    - sleep 10
-    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Clean up the tar files to speed up future deployments
-cleanup_tar_files:
-  stage: deploy
-  image: alpine:3.18
-  needs:
-    - deploy_test_env_staging
-  script:
-    - set -euo pipefail
-    - echo "Cleaning up tar files on remote server"
-    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "rm -f $REMOTE_PATH/*.tar"
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Add a new validation job
-validate_deployment:
-  stage: deploy
-  image: alpine:3.18
-  resource_group: remote_test
-  needs:
-    - deploy_test_env_staging
-  script:
-    - set -euo pipefail
-    - apk add --no-cache curl
-    - |
-      echo "Validating deployment..."
-      for i in {1..30}; do
-        if curl -f -s https://test.sparabot.com/health > /dev/null; then
-          echo "Deployment validated successfully"
-          exit 0
-        fi
-        echo "Attempt $i: Service not ready, waiting..."
-        sleep 10
-      done
-      echo "Deployment validation failed"
-      exit 1
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # Tag the submodules and the assembly repo after successful tests.
 tagging:
   stage: finish
   image: alpine:3.18
+  interruptible: false  # Don't interrupt tagging once started
   needs:
-    - validate_deployment
+    - deploy_and_validate_remote
     - test_all_services  # To get the tag names from dotenv
   script:
     - set -euo pipefail
@@ -437,6 +434,9 @@ tagging:
 cleanup_on_failure:
   stage: finish
   image: alpine:3.18
+  resource_group: 
+    resource_group: remote_test
+    process_mode: newest_first
   script: *cleanup_script
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
