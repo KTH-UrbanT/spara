@@ -30,7 +30,7 @@ variables:
   - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
   - |
     $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<'EOF'
-      set -e
+      set -euo pipefail
 
       echo "Stopping containers if compose file exists..."
       if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
@@ -73,6 +73,7 @@ variables:
 # The 'container_setup' job initializes the Git repository, installs necessary dependencies,
 # and prepares the environment for testing and deployment.
 before_script:
+  - set -euo pipefail
 
   # install needed CLIs (only if running on Alpine)
   - |
@@ -104,10 +105,10 @@ prepare_environment:
   image: alpine:3.18
   resource_group: gitlab
   script:
-  
+    - set -euo pipefail
     - ls
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-    - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git .
+    - git clone --depth 1 --shallow-submodules --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git .
     - git checkout "$CI_COMMIT_REF_NAME"
 
     # inject .env files
@@ -115,16 +116,10 @@ prepare_environment:
     - echo "$LLM_SERVICE_ENV"     > llm-service/.env
 
     - ls
-    - git status
-    - git submodule status
-    - cd frontend
-    - git branch
-    - git status
-    - cd ../
+    - echo "Using shallow clone for improved performance"
 
   artifacts:
     paths:
-      - .git/
       - message-service/
       - llm-service/
       - frontend/
@@ -160,6 +155,7 @@ build_images:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+    - set -euo pipefail
 
     - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache
 
@@ -192,6 +188,7 @@ test_all_services:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+    - set -euo pipefail
 
     # Load all Docker images
     - docker load -i message-service.tar
@@ -216,37 +213,14 @@ test_all_services:
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d frontend
     - echo "Frontend tests placeholder"
     
-    # Tag all submodules after successful tests
-    - set -e
-    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+    # Generate tag names for later use in tagging job
     - touch combined_tags.env
-
-    # Tag message-service
-    - cd message-service
     - MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "Tagging message-service with '$MESSAGE_TAG'"
-    - git tag -a "$MESSAGE_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-    - git push origin "$MESSAGE_TAG"
-    - echo "MESSAGE_SERVICE_TAG=$MESSAGE_TAG" >> ../combined_tags.env
-    - cd ..
-
-    # Tag llm-service
-    - cd llm-service
     - LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "Tagging llm-service with '$LLM_TAG"
-    - git tag -a "$LLM_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-    - git push origin "$LLM_TAG"
-    - echo "LLM_SERVICE_TAG=$LLM_TAG" >> ../combined_tags.env
-    - cd ..
-
-    # Tag frontend
-    - cd frontend
     - FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "Tagging frontend with '$FRONTEND_TAG'"
-    - git tag -a "$FRONTEND_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-    - git push origin "$FRONTEND_TAG"
-    - echo "FRONTEND_TAG=$FRONTEND_TAG" >> ../combined_tags.env
-    - cd ..
+    - echo "MESSAGE_SERVICE_TAG=$MESSAGE_TAG" >> combined_tags.env
+    - echo "LLM_SERVICE_TAG=$LLM_TAG" >> combined_tags.env
+    - echo "FRONTEND_TAG=$FRONTEND_TAG" >> combined_tags.env
   artifacts:
     reports:
       dotenv: combined_tags.env
@@ -267,6 +241,7 @@ sync_staging:
   image: alpine:3.18
   resource_group: remote_test
   script:
+    - set -euo pipefail
 
     - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
 
@@ -306,6 +281,7 @@ deploy_test_env_staging:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+    - set -euo pipefail
 
     - echo "Deploying to test staging server"
     
@@ -317,7 +293,7 @@ deploy_test_env_staging:
       if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
         echo "Installing Docker..."
         ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<'EOF'
-          set -e
+          set -euo pipefail
           echo "Installing Docker and docker compose plugin..."
           sudo apt update
           sudo apt install -y ca-certificates curl gnupg lsb-release
@@ -339,7 +315,7 @@ deploy_test_env_staging:
     - echo "Loading Docker images..."
     - |
       ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
-        set -e
+        set -euo pipefail
         cd $REMOTE_PATH
         sudo docker load -i message-service.tar
         sudo docker load -i llm-service.tar
@@ -382,6 +358,7 @@ cleanup_tar_files:
   needs:
     - deploy_test_env_staging
   script:
+    - set -euo pipefail
     - echo "Cleaning up tar files on remote server"
     - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "rm -f $REMOTE_PATH/*.tar"
   rules:
@@ -395,6 +372,7 @@ validate_deployment:
   needs:
     - deploy_test_env_staging
   script:
+    - set -euo pipefail
     - apk add --no-cache curl
     - |
       echo "Validating deployment..."
@@ -417,19 +395,40 @@ tagging:
   image: alpine:3.18
   needs:
     - validate_deployment
-    - prepare_environment
-    - build_images
+    - test_all_services  # To get the tag names from dotenv
   script:
+    - set -euo pipefail
 
-    - echo "Tested submodule tags ";
-    - echo "Message Service  $MESSAGE_SERVICE_TAG";
-    - echo "LLM Service  $LLM_SERVICE_TAG";
-    - echo "Frontend  $FRONTEND_TAG"
+    - echo "Tested submodule tags: $MESSAGE_SERVICE_TAG, $LLM_SERVICE_TAG, $FRONTEND_TAG"
     
-    - ASSEMBLY_TAG="release-$(date +%Y%m%d-%H%M%S)"; 
-    - echo "Creating assembly release tag $ASSEMBLY_TAG"; 
-    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"; 
-    - git tag -a "$ASSEMBLY_TAG" -m "Assembly release with tested submodules MS $MESSAGE_SERVICE_TAG, LLM $LLM_SERVICE_TAG, FE $FRONTEND_TAG";
+    # Fresh clone for tagging (full depth needed for git operations)
+    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+    - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git tagging_repo
+    - cd tagging_repo
+    
+    # Tag submodules with the test-passed tags
+    - echo "Tagging message-service with '$MESSAGE_SERVICE_TAG'"
+    - cd message-service
+    - git tag -a "$MESSAGE_SERVICE_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+    - git push origin "$MESSAGE_SERVICE_TAG"
+    - cd ..
+
+    - echo "Tagging llm-service with '$LLM_SERVICE_TAG'"
+    - cd llm-service
+    - git tag -a "$LLM_SERVICE_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+    - git push origin "$LLM_SERVICE_TAG"
+    - cd ..
+
+    - echo "Tagging frontend with '$FRONTEND_TAG'"
+    - cd frontend
+    - git tag -a "$FRONTEND_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+    - git push origin "$FRONTEND_TAG"
+    - cd ..
+    
+    # Tag the assembly repo
+    - ASSEMBLY_TAG="release-$(date +%Y%m%d-%H%M%S)"
+    - echo "Creating assembly release tag $ASSEMBLY_TAG"
+    - git tag -a "$ASSEMBLY_TAG" -m "Assembly release with tested submodules MS $MESSAGE_SERVICE_TAG, LLM $LLM_SERVICE_TAG, FE $FRONTEND_TAG"
     - git push origin "$ASSEMBLY_TAG"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
