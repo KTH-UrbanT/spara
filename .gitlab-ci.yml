@@ -29,7 +29,7 @@ variables:
 .cleanup_script_template: &cleanup_script
   - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
   - |
-    $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<'EOF'
+    $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<EOF
       set -euo pipefail
 
       echo "Stopping containers if compose file exists..."
@@ -46,13 +46,13 @@ variables:
 
       echo "Targeted Docker cleanup..."
       # Remove stopped containers only
-      sudo docker rm $(sudo docker ps -aq -f status=exited) 2>/dev/null || true
+      sudo docker rm \$(sudo docker ps -aq -f status=exited) 2>/dev/null || true
 
       # Remove dangling (untagged) images
-      sudo docker rmi $(sudo docker images -f dangling=true -q) 2>/dev/null || true
+      sudo docker rmi \$(sudo docker images -f dangling=true -q) 2>/dev/null || true
 
       # Remove dangling volumes
-      sudo docker volume rm $(sudo docker volume ls -qf dangling=true) 2>/dev/null || true
+      sudo docker volume rm \$(sudo docker volume ls -qf dangling=true) 2>/dev/null || true
 
       echo "Cleaning up /tmp and old logs..."
       # Only delete files in /tmp that are older than 7 days and not in use
@@ -63,8 +63,8 @@ variables:
       echo "Disk usage after cleanup:"
       df -h /
 
-      USAGE=$(df / | awk 'NR==2 {print $5}' | tr -d '%')
-      if [ "$USAGE" -gt 90 ]; then
+      USAGE=\$(df / | awk 'NR==2 {print \$5}' | tr -d '%')
+      if [ "\$USAGE" -gt 90 ]; then
         echo "ERROR: Root filesystem is still over 90% full. Please free up space before deploying."
         exit 1
       fi
