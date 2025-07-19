@@ -28,5 +28,6 @@ CREATE TABLE IF NOT EXISTS ratings (
     rating_id SERIAL PRIMARY KEY,
     user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
     rating FLOAT,
-    message TEXT NOT NULL
+    message TEXT NOT NULL,
+    version TEXT
 );
