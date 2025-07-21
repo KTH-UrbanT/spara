@@ -14,12 +14,10 @@ variables:
   COMPOSE_FILE_TEST: docker-compose.test.yml
   COMPOSE_FILE_TEST_CI: docker-compose.test.ci.yml
 
-  STAGING_HOST: $STAGING_HOST
-  STAGING_HOST_USER: ubuntu
-  STAGING_HOST_KEY: $SSH_STAGING_HOST_KEY
-  STAGING_HOST_REMOTE_PATH: /home/ubuntu/spara
-
-  DEPLOYMENT_HOST: $DEPLOYMENT_HOST
+  STAGING_HOST:               $SSH_STAGING_HOST
+  STAGING_HOST_USERNAME:      $SSH_STAGING_USERNAME
+  STAGING_HOST_KEY:           $SSH_STAGING_HOST_KEY
+  STAGING_HOST_REMOTE_PATH:   /home/ubuntu/spara
 
   SSH_GITHUB_PRIVATE_KEY: $SSH_GITHUB_KEY
   # Instead of using the repository from GitLab,
@@ -30,9 +28,8 @@ variables:
 
 # YAML anchor for cleanup script
 .cleanup_script_template: &cleanup_script
-  - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
   - |
-    $SSH_CMD $STAGING_HOST_USER@$STAGING_HOST <<EOF
+    $SSH_CMD $STAGING_HOST_USERNAME@$STAGING_HOST <<EOF
       set -euo pipefail
 
       echo "Stopping containers if compose file exists..."
@@ -244,31 +241,32 @@ deploy_and_validate_remote_staging:
     # Step 1: Cleanup (from cleanup_remote)
     - echo "=== CLEANUP PHASE ==="
     - echo "Cleaning up staging server before deployment"
+    - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
     - *cleanup_script
 
     # Step 2: Sync (from sync_staging)
     - echo "=== SYNC PHASE ==="
     - echo "Preparing and syncing files to staging server"
-    - $SSH_CMD $STAGING_HOST_USER@$STAGING_HOST "sudo rm -rf $STAGING_HOST_REMOTE_PATH/*"
-    - $SSH_CMD $STAGING_HOST_USER@$STAGING_HOST "mkdir -p $(dirname $STAGING_HOST_REMOTE_PATH)"
-    - rsync -avz -e "$SSH_CMD" infra/ $STAGING_HOST_USER@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/infra
-    - $SSH_CMD $STAGING_HOST_USER@$STAGING_HOST "mkdir -p $STAGING_HOST_REMOTE_PATH/message-service $STAGING_HOST_REMOTE_PATH/llm-service $STAGING_HOST_REMOTE_PATH/frontend"
-    - rsync -avz -e "$SSH_CMD" message-service/.env $STAGING_HOST_USER@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/message-service/.env
-    - rsync -avz -e "$SSH_CMD" llm-service/.env $STAGING_HOST_USER@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/llm-service/.env
-    - rsync -avz -e "$SSH_CMD" message-service.tar $STAGING_HOST_USER@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" llm-service.tar $STAGING_HOST_USER@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" frontend.tar $STAGING_HOST_USER@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/
+    - $SSH_CMD $STAGING_HOST_USERNAME@$STAGING_HOST "sudo rm -rf $STAGING_HOST_REMOTE_PATH/*"
+    - $SSH_CMD $STAGING_HOST_USERNAME@$STAGING_HOST "mkdir -p $(dirname $STAGING_HOST_REMOTE_PATH)"
+    - rsync -avz -e "$SSH_CMD" infra/ $STAGING_HOST_USERNAME@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/infra
+    - $SSH_CMD $STAGING_HOST_USERNAME@$STAGING_HOST "mkdir -p $STAGING_HOST_REMOTE_PATH/message-service $STAGING_HOST_REMOTE_PATH/llm-service $STAGING_HOST_REMOTE_PATH/frontend"
+    - rsync -avz -e "$SSH_CMD" message-service/.env $STAGING_HOST_USERNAME@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/message-service/.env
+    - rsync -avz -e "$SSH_CMD" llm-service/.env $STAGING_HOST_USERNAME@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/llm-service/.env
+    - rsync -avz -e "$SSH_CMD" message-service.tar $STAGING_HOST_USERNAME@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" llm-service.tar $STAGING_HOST_USERNAME@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" frontend.tar $STAGING_HOST_USERNAME@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/
 
     # Step 3: Deploy (from deploy_test_env_staging)
     - echo "=== DEPLOY PHASE ==="
     - echo "Deploying to staging server"
     - |
-      DOCKER_STATUS=$(ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
+      DOCKER_STATUS=$(ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
       echo "Docker status: $DOCKER_STATUS"
       
       if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
         echo "Installing Docker..."
-        ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST <<'EOF'
+        ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST <<'EOF'
           set -euo pipefail
           echo "Installing Docker and docker compose plugin..."
           sudo apt update
@@ -284,11 +282,11 @@ deploy_and_validate_remote_staging:
         echo "Docker already installed, skipping installation"
       fi
     
-    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST 'docker compose version'
+    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST 'docker compose version'
     
     - echo "Loading Docker images..."
     - |
-      ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST <<EOF
+      ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST <<EOF
         set -euo pipefail
         cd $STAGING_HOST_REMOTE_PATH
         sudo docker load -i message-service.tar
@@ -301,14 +299,14 @@ deploy_and_validate_remote_staging:
       for attempt in 1 2 3; do
         echo "Deployment attempt $attempt..."
         
-        if ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
+        if ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
           echo "Services started successfully on attempt $attempt"
           break
         else
           echo "Attempt $attempt failed"
           if [ $attempt -lt 3 ]; then
             echo "Cleaning up and waiting 30 seconds before retry..."
-            ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
+            ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
             sleep 30
           else
             echo "All deployment attempts failed"
@@ -319,7 +317,7 @@ deploy_and_validate_remote_staging:
     
     - echo "Verifying deployment..."
     - sleep 10
-    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
+    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
 
     # Step 4: Validate (from validate_deployment)
     - echo "=== VALIDATION PHASE ==="
@@ -342,7 +340,7 @@ deploy_and_validate_remote_staging:
     # Step 5: Cleanup tar files (from cleanup_tar_files)
     - echo "=== CLEANUP TAR FILES ==="
     - echo "Cleaning up tar files on staging server"
-    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "rm -f $STAGING_HOST_REMOTE_PATH/*.tar"
+    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST "rm -f $STAGING_HOST_REMOTE_PATH/*.tar"
     
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -412,7 +410,9 @@ cleanup_on_failure:
   stage: finish
   image: alpine:3.18
   resource_group: remote_staging
-  script: *cleanup_script
+  script: 
+    - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
+    - *cleanup_script
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: on_failure
@@ -452,4 +452,3 @@ merge_assembly_to_main:
 # similar to how we do it for the test branch. Clone and then
 # deploy to production.
 #deploy_and_validate_remote_production:
-
