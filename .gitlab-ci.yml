@@ -224,7 +224,6 @@ deploy_and_validate_remote:
   needs:
     - build_images
     - prepare_environment
-    - cleanup_remote_test # Ensure cleanup is done before deploying
     - test_all_services  # Wait for tests to pass before deploying
   stage: deploy
   image: alpine:3.18
