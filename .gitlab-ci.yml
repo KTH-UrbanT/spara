@@ -434,13 +434,10 @@ tagging:
 cleanup_on_failure:
   stage: finish
   image: alpine:3.18
-  resource_group: 
-    resource_group: remote_test
-    process_mode: newest_first
+  resource_group: remote_test
   script: *cleanup_script
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: on_failure
   allow_failure: true
-
 
