@@ -352,6 +352,7 @@ tagging:
   needs:
     - deploy_and_validate_remote
     - test_all_services  # To get the tag names from dotenv
+    - prepare_environment # To get submodule SHAs
   script:
     - set -euo pipefail
 
