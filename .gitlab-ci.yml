@@ -452,3 +452,4 @@ merge_assembly_to_main:
 # similar to how we do it for the test branch. Clone and then
 # deploy to production.
 #deploy_and_validate_remote_production:
+
