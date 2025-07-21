@@ -344,8 +344,9 @@ deploy_and_validate_remote:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Tag the submodules and the assembly repo after successful tests.
-tagging:
+# Tag the submodules and the assembly repo after successful tests,
+# and merge the changes back to the main branch of each submodule.
+tag_and_merge:
   stage: finish
   image: alpine:3.18
   interruptible: false  # Don't interrupt tagging once started
@@ -379,17 +380,59 @@ tagging:
         git checkout "$SHA"
         git tag -a "$TAG_VALUE" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
         git push origin "$TAG_VALUE"
+
+        # Merge the tagged commit to main
+        git checkout main
+        git merge --no-ff "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
+        git push origin main
+
         cd ..
       done
 
     # Tag the assembly repo (optionally include SHAs in tag message)
-    - ASSEMBLY_TAG="release-$(date +%Y%m%d-%H%M%S)"
+    - ASSEMBLY_TAG="passed_test-$(date +%Y%m%d-%H%M%S)"
     - echo "Creating assembly release tag $ASSEMBLY_TAG"
     - git tag -a "$ASSEMBLY_TAG" -m "Assembly release with tested SHAs $(cat submodule_shas.txt | xargs)"
     - git push origin "$ASSEMBLY_TAG"
 
+    # Export the assembly tag for the manual merge job
+    - echo "ASSEMBLY_TAG=$ASSEMBLY_TAG" > assembly_tag.env
+
+  artifacts:
+    reports:
+      dotenv: assembly_tag.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+# Manually triggered job to merge the assembly repo to main
+# This job must be manually triggered after successful tagging
+merge_assembly_to_main:
+  stage: finish
+  image: alpine:3.18
+  resource_group: remote_productions
+  needs:
+    - tag_and_merge  # To get the assembly tag
+  script:
+    - set -euo pipefail
+
+    - echo "Merging assembly tag $ASSEMBLY_TAG to main branch"
+    
+    # Fresh clone for merging (full depth needed for git operations)
+    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+    - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git merge_repo
+    - cd merge_repo
+    
+    # Merge the assembly repo's current state/tag to main
+    - git checkout main
+    - git merge --no-ff "$ASSEMBLY_TAG" -m "Merge assembly release $ASSEMBLY_TAG to main"
+    - git push origin main
+
+    - echo "Successfully merged assembly tag $ASSEMBLY_TAG to main"
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+      when: manual
+      allow_failure: false
 
 # Cleanup job that runs only on pipeline failure
 cleanup_on_failure:
