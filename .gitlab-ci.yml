@@ -16,7 +16,7 @@ variables:
 
   STAGING_HOST: $STAGING_HOST
   STAGING_HOST_USER: ubuntu
-  STAGING_HOST_KEY: $STAGING_HOST_KEY
+  STAGING_HOST_KEY: $SSH_STAGING_HOST_KEY
   STAGING_HOST_REMOTE_PATH: /home/ubuntu/spara
 
   DEPLOYMENT_HOST: $DEPLOYMENT_HOST
@@ -30,7 +30,7 @@ variables:
 
 # YAML anchor for cleanup script
 .cleanup_script_template: &cleanup_script
-  - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
+  - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
   - |
     $SSH_CMD $STAGING_HOST_USER@$STAGING_HOST <<EOF
       set -euo pipefail
@@ -88,8 +88,8 @@ before_script:
   - mkdir -p ~/.ssh
   - echo "$SSH_GITHUB_PRIVATE_KEY" > ~/.ssh/github_key
   - chmod 600 ~/.ssh/github_key
-  - echo "$STAGING_HOST_KEY" > ~/.ssh/test_remote_key
-  - chmod 600 ~/.ssh/test_remote_key
+  - echo "$STAGING_HOST_KEY" > ~/.ssh/staging_remote_key
+  - chmod 600 ~/.ssh/staging_remote_key
 
   # trust hosts
   - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
@@ -263,12 +263,12 @@ deploy_and_validate_remote_staging:
     - echo "=== DEPLOY PHASE ==="
     - echo "Deploying to staging server"
     - |
-      DOCKER_STATUS=$(ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
+      DOCKER_STATUS=$(ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
       echo "Docker status: $DOCKER_STATUS"
       
       if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
         echo "Installing Docker..."
-        ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST <<'EOF'
+        ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST <<'EOF'
           set -euo pipefail
           echo "Installing Docker and docker compose plugin..."
           sudo apt update
@@ -284,11 +284,11 @@ deploy_and_validate_remote_staging:
         echo "Docker already installed, skipping installation"
       fi
     
-    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST 'docker compose version'
+    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST 'docker compose version'
     
     - echo "Loading Docker images..."
     - |
-      ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST <<EOF
+      ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST <<EOF
         set -euo pipefail
         cd $STAGING_HOST_REMOTE_PATH
         sudo docker load -i message-service.tar
@@ -301,14 +301,14 @@ deploy_and_validate_remote_staging:
       for attempt in 1 2 3; do
         echo "Deployment attempt $attempt..."
         
-        if ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
+        if ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
           echo "Services started successfully on attempt $attempt"
           break
         else
           echo "Attempt $attempt failed"
           if [ $attempt -lt 3 ]; then
             echo "Cleaning up and waiting 30 seconds before retry..."
-            ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
+            ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
             sleep 30
           else
             echo "All deployment attempts failed"
@@ -319,7 +319,7 @@ deploy_and_validate_remote_staging:
     
     - echo "Verifying deployment..."
     - sleep 10
-    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
+    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
 
     # Step 4: Validate (from validate_deployment)
     - echo "=== VALIDATION PHASE ==="
@@ -342,7 +342,7 @@ deploy_and_validate_remote_staging:
     # Step 5: Cleanup tar files (from cleanup_tar_files)
     - echo "=== CLEANUP TAR FILES ==="
     - echo "Cleaning up tar files on staging server"
-    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "rm -f $STAGING_HOST_REMOTE_PATH/*.tar"
+    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "rm -f $STAGING_HOST_REMOTE_PATH/*.tar"
     
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
