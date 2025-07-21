@@ -111,6 +111,11 @@ prepare_environment:
     - git clone --depth 1 --shallow-submodules --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git .
     - git checkout "$CI_COMMIT_REF_NAME"
 
+    # Record exact SHAs of all submodules
+    - echo "Recording submodule SHAs..."
+    - git submodule status > submodule_shas.txt
+    - cat submodule_shas.txt
+
     # inject .env files
     - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
     - echo "$LLM_SERVICE_ENV"     > llm-service/.env
@@ -120,6 +125,7 @@ prepare_environment:
 
   artifacts:
     paths:
+      - submodule_shas.txt
       - message-service/
       - llm-service/
       - frontend/
@@ -356,30 +362,31 @@ tagging:
     - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git tagging_repo
     - cd tagging_repo
     
-    # Tag submodules with the test-passed tags
-    - echo "Tagging message-service with '$MESSAGE_SERVICE_TAG'"
-    - cd message-service
-    - git tag -a "$MESSAGE_SERVICE_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-    - git push origin "$MESSAGE_SERVICE_TAG"
-    - cd ..
+    # Tag each submodule at locked SHA
+    - echo "Reading submodule SHAs from submodule_shas.txt..."
+    - cp ../submodule_shas.txt .
 
-    - echo "Tagging llm-service with '$LLM_SERVICE_TAG'"
-    - cd llm-service
-    - git tag -a "$LLM_SERVICE_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-    - git push origin "$LLM_SERVICE_TAG"
-    - cd ..
+    - |
+      for name in message-service llm-service frontend; do
+        SHA=$(grep "$name" submodule_shas.txt | awk '{print $1}')
+        TAG_VAR_NAME=$(echo "$name" | tr 'a-z-' 'A-Z_' )_TAG
+        TAG_VALUE=$(eval echo \$$TAG_VAR_NAME)
 
-    - echo "Tagging frontend with '$FRONTEND_TAG'"
-    - cd frontend
-    - git tag -a "$FRONTEND_TAG" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-    - git push origin "$FRONTEND_TAG"
-    - cd ..
-    
-    # Tag the assembly repo
+        echo "Tagging $name at SHA $SHA with tag $TAG_VALUE"
+        cd "$name"
+        git fetch origin
+        git checkout "$SHA"
+        git tag -a "$TAG_VALUE" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+        git push origin "$TAG_VALUE"
+        cd ..
+      done
+
+    # Tag the assembly repo (optionally include SHAs in tag message)
     - ASSEMBLY_TAG="release-$(date +%Y%m%d-%H%M%S)"
     - echo "Creating assembly release tag $ASSEMBLY_TAG"
-    - git tag -a "$ASSEMBLY_TAG" -m "Assembly release with tested submodules MS $MESSAGE_SERVICE_TAG, LLM $LLM_SERVICE_TAG, FE $FRONTEND_TAG"
+    - git tag -a "$ASSEMBLY_TAG" -m "Assembly release with tested SHAs $(cat submodule_shas.txt | xargs)"
     - git push origin "$ASSEMBLY_TAG"
+
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
