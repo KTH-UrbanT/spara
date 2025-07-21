@@ -4,6 +4,13 @@
 # is needed, since the GitLab runners starts with a fresh
 # Docker image for each job.
 
+# Add to docker compose prod.
+volumes:
+  message_store_data:
+    external: true  # volume must pre‑exist; Compose will never delete it
+  redis_data:
+    external: true  # volume must pre‑exist; Compose will never delete it
+
 stages:
   - prepare
   - test
@@ -13,11 +20,18 @@ stages:
 variables:
   COMPOSE_FILE_TEST: docker-compose.test.yml
   COMPOSE_FILE_TEST_CI: docker-compose.test.ci.yml
+  COMPOSE_FILE_PROD: docker-compose.prod.yml
 
   STAGING_HOST:               $SSH_STAGING_HOST
-  STAGING_HOST_USERNAME:      $SSH_STAGING_USERNAME
-  STAGING_HOST_KEY:           $SSH_STAGING_HOST_KEY
-  STAGING_HOST_REMOTE_PATH:   /home/ubuntu/spara
+  STAGING_USERNAME:           $SSH_STAGING_USERNAME
+  STAGING_KEY:                $SSH_STAGING_KEY
+  STAGING_REMOTE_PATH:        /home/ubuntu/spara
+
+  #PRODUCTION_HOST:            $SSH_PRODUCTION_HOST
+  #PRODUCTION_USERNAME:        $SSH_PRODUCTION_USERNAME
+  #PRODUCTION_KEY:             $SSH_PRODUCTION_KEY
+  #PRODUCTION_PASSWORD:        $SSH_PRODUCTION_PASSWORD
+  #PRODUCTION_REMOTE_PATH:     $SSH_PRODUCTION_REMOTE_PATH
 
   SSH_GITHUB_PRIVATE_KEY: $SSH_GITHUB_KEY
   # Instead of using the repository from GitLab,
@@ -29,12 +43,12 @@ variables:
 # YAML anchor for cleanup script
 .cleanup_script_template: &cleanup_script
   - |
-    $SSH_CMD $STAGING_HOST_USERNAME@$STAGING_HOST <<EOF
+    $SSH_CMD $STAGING_USERNAME@$STAGING_HOST <<EOF
       set -euo pipefail
 
       echo "Stopping containers if compose file exists..."
-      if [ -d "$STAGING_HOST_REMOTE_PATH/infra" ] && [ -f "$STAGING_HOST_REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
-        cd $STAGING_HOST_REMOTE_PATH/infra
+      if [ -d "$STAGING_REMOTE_PATH/infra" ] && [ -f "$STAGING_REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
+        cd $STAGING_REMOTE_PATH/infra
         sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true
         echo "Stopped existing containers."
       else
@@ -70,6 +84,56 @@ variables:
       fi
     EOF
 
+# YAML anchor for production cleanup script
+# Only stops and removes application services, preserves databases
+.cleanup_production_script_template: &cleanup_production_script
+  - |
+    $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+      set -euo pipefail
+
+      echo "Stopping application services only (preserving databases)..."
+      if [ -d "$PRODUCTION_REMOTE_PATH/infra" ] && [ -f "$PRODUCTION_REMOTE_PATH/infra/$COMPOSE_FILE_PROD" ]; then
+        cd $PRODUCTION_REMOTE_PATH/infra
+        
+        # Stop only application services, keep databases running
+        sudo docker compose -f $COMPOSE_FILE_PROD stop frontend message-service llm-service || true
+        sudo docker compose -f $COMPOSE_FILE_PROD rm -f frontend message-service llm-service || true
+        echo "Stopped application services (frontend, message-service, llm-service)."
+        
+        # Remove old application images to free space
+        sudo docker rmi spara-frontend:latest 2>/dev/null || true
+        sudo docker rmi spara-message-service:latest 2>/dev/null || true
+        sudo docker rmi spara-llm-service:latest 2>/dev/null || true
+        
+        echo "Database services (redis, postgres) remain untouched."
+      else
+        echo "No existing production deployment found or compose file not found."
+      fi
+
+      echo "Disk usage before cleanup:"
+      df -h /
+
+      echo "Production-safe Docker cleanup..."
+      # Remove stopped containers (but not database containers)
+      sudo docker rm \$(sudo docker ps -aq -f status=exited) 2>/dev/null || true
+
+      # Remove dangling (untagged) images only
+      sudo docker rmi \$(sudo docker images -f dangling=true -q) 2>/dev/null || true
+
+      # Clean up /tmp and old logs (conservative approach)
+      find /tmp -mtime +7 -and -not -exec fuser -s {} ';' -exec rm -rf {} + 2>/dev/null || true
+      sudo find /var/log -type f -name "*.gz" -mtime +30 -delete 2>/dev/null || true
+
+      echo "Disk usage after cleanup:"
+      df -h /
+
+      USAGE=\$(df / | awk 'NR==2 {print \$5}' | tr -d '%')
+      if [ "\$USAGE" -gt 90 ]; then
+        echo "WARNING: Root filesystem is over 90% full. Manual intervention may be needed."
+        echo "Database volumes and data have been preserved."
+      fi
+    EOF
+
 # The 'container_setup' job initializes the Git repository, installs necessary dependencies,
 # and prepares the environment for testing and deployment.
 before_script:
@@ -85,12 +149,15 @@ before_script:
   - mkdir -p ~/.ssh
   - echo "$SSH_GITHUB_PRIVATE_KEY" > ~/.ssh/github_key
   - chmod 600 ~/.ssh/github_key
-  - echo "$STAGING_HOST_KEY" > ~/.ssh/staging_remote_key
+  - echo "$STAGING_KEY" > ~/.ssh/staging_remote_key
   - chmod 600 ~/.ssh/staging_remote_key
+  - echo "$PRODUCTION_KEY" > ~/.ssh/production_remote_key
+  - chmod 600 ~/.ssh/production_remote_key
 
   # trust hosts
   - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
   - ssh-keyscan -H $STAGING_HOST >> ~/.ssh/known_hosts
+  - ssh-keyscan -H $PRODUCTION_HOST >> ~/.ssh/known_hosts
   
   # Configure git user for all jobs
   - git config --global user.email "ci@sparabot.com"
@@ -247,26 +314,26 @@ deploy_and_validate_remote_staging:
     # Step 2: Sync (from sync_staging)
     - echo "=== SYNC PHASE ==="
     - echo "Preparing and syncing files to staging server"
-    - $SSH_CMD $STAGING_HOST_USERNAME@$STAGING_HOST "sudo rm -rf $STAGING_HOST_REMOTE_PATH/*"
-    - $SSH_CMD $STAGING_HOST_USERNAME@$STAGING_HOST "mkdir -p $(dirname $STAGING_HOST_REMOTE_PATH)"
-    - rsync -avz -e "$SSH_CMD" infra/ $STAGING_HOST_USERNAME@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/infra
-    - $SSH_CMD $STAGING_HOST_USERNAME@$STAGING_HOST "mkdir -p $STAGING_HOST_REMOTE_PATH/message-service $STAGING_HOST_REMOTE_PATH/llm-service $STAGING_HOST_REMOTE_PATH/frontend"
-    - rsync -avz -e "$SSH_CMD" message-service/.env $STAGING_HOST_USERNAME@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/message-service/.env
-    - rsync -avz -e "$SSH_CMD" llm-service/.env $STAGING_HOST_USERNAME@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/llm-service/.env
-    - rsync -avz -e "$SSH_CMD" message-service.tar $STAGING_HOST_USERNAME@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" llm-service.tar $STAGING_HOST_USERNAME@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" frontend.tar $STAGING_HOST_USERNAME@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/
+    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "sudo rm -rf $STAGING_REMOTE_PATH/*"
+    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $(dirname $STAGING_REMOTE_PATH)"
+    - rsync -avz -e "$SSH_CMD" infra/ $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/infra
+    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $STAGING_REMOTE_PATH/message-service $STAGING_REMOTE_PATH/llm-service $STAGING_REMOTE_PATH/frontend"
+    - rsync -avz -e "$SSH_CMD" message-service/.env $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/message-service/.env
+    - rsync -avz -e "$SSH_CMD" llm-service/.env $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/llm-service/.env
+    - rsync -avz -e "$SSH_CMD" message-service.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" llm-service.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" frontend.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
 
     # Step 3: Deploy (from deploy_test_env_staging)
     - echo "=== DEPLOY PHASE ==="
     - echo "Deploying to staging server"
     - |
-      DOCKER_STATUS=$(ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
+      DOCKER_STATUS=$(ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
       echo "Docker status: $DOCKER_STATUS"
       
       if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
         echo "Installing Docker..."
-        ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST <<'EOF'
+        ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST <<'EOF'
           set -euo pipefail
           echo "Installing Docker and docker compose plugin..."
           sudo apt update
@@ -282,13 +349,13 @@ deploy_and_validate_remote_staging:
         echo "Docker already installed, skipping installation"
       fi
     
-    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST 'docker compose version'
+    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST 'docker compose version'
     
     - echo "Loading Docker images..."
     - |
-      ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST <<EOF
+      ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST <<EOF
         set -euo pipefail
-        cd $STAGING_HOST_REMOTE_PATH
+        cd $STAGING_REMOTE_PATH
         sudo docker load -i message-service.tar
         sudo docker load -i llm-service.tar
         sudo docker load -i frontend.tar
@@ -299,14 +366,14 @@ deploy_and_validate_remote_staging:
       for attempt in 1 2 3; do
         echo "Deployment attempt $attempt..."
         
-        if ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
+        if ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
           echo "Services started successfully on attempt $attempt"
           break
         else
           echo "Attempt $attempt failed"
           if [ $attempt -lt 3 ]; then
             echo "Cleaning up and waiting 30 seconds before retry..."
-            ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
+            ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
             sleep 30
           else
             echo "All deployment attempts failed"
@@ -317,7 +384,7 @@ deploy_and_validate_remote_staging:
     
     - echo "Verifying deployment..."
     - sleep 10
-    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
+    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
 
     # Step 4: Validate (from validate_deployment)
     - echo "=== VALIDATION PHASE ==="
@@ -340,7 +407,7 @@ deploy_and_validate_remote_staging:
     # Step 5: Cleanup tar files (from cleanup_tar_files)
     - echo "=== CLEANUP TAR FILES ==="
     - echo "Cleaning up tar files on staging server"
-    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USERNAME@$STAGING_HOST "rm -f $STAGING_HOST_REMOTE_PATH/*.tar"
+    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST "rm -f $STAGING_REMOTE_PATH/*.tar"
     
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -451,4 +518,123 @@ merge_assembly_to_main:
 # On commit to main branch, we clean the production deployment server,
 # similar to how we do it for the test branch. Clone and then
 # deploy to production.
-#deploy_and_validate_remote_production:
+deploy_and_validate_remote_production:
+  needs:
+    - build_images
+    - prepare_environment
+    - test_all_services  # Wait for tests to pass before deploying
+    - merge_assembly_to_main
+  stage: deploy
+  image: alpine:3.18
+  resource_group: remote_production
+  interruptible: false  # Don't interrupt deployment once started
+  script:
+    - exit
+    - set -euo pipefail
+    
+    # Step 1: Production Cleanup (using production-specific cleanup script)
+    - echo "=== PRODUCTION CLEANUP PHASE ==="
+    - echo "Cleaning up production server before deployment (preserving databases)"
+    - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
+    - *cleanup_production_script
+
+    # Step 2: Sync (adapted for production)
+    - echo "=== PRODUCTION SYNC PHASE ==="
+    - echo "Preparing and syncing files to production server"
+    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "sudo rm -rf $PRODUCTION_REMOTE_PATH/frontend $PRODUCTION_REMOTE_PATH/message-service $PRODUCTION_REMOTE_PATH/llm-service"
+    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "mkdir -p $(dirname $PRODUCTION_REMOTE_PATH)"
+    - rsync -avz -e "$SSH_CMD" infra/ $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/infra
+    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "mkdir -p $PRODUCTION_REMOTE_PATH/message-service $PRODUCTION_REMOTE_PATH/llm-service $PRODUCTION_REMOTE_PATH/frontend"
+    - rsync -avz -e "$SSH_CMD" message-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/message-service/.env
+    - rsync -avz -e "$SSH_CMD" llm-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/llm-service/.env
+    - rsync -avz -e "$SSH_CMD" message-service.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" llm-service.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" frontend.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+
+    # Step 3: Deploy to production
+    - echo "=== PRODUCTION DEPLOY PHASE ==="
+    - echo "Deploying to production server"
+    - |
+      DOCKER_STATUS=$(ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
+      echo "Docker status: $DOCKER_STATUS"
+      
+      if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
+        echo "Installing Docker on production server..."
+        ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST <<'EOF'
+          set -euo pipefail
+          echo "Installing Docker and docker compose plugin..."
+          sudo apt update
+          sudo apt install -y ca-certificates curl gnupg lsb-release
+          sudo install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          sudo chmod a+r /etc/apt/keyrings/docker.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          sudo apt update
+          sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      EOF
+      else
+        echo "Docker already installed, skipping installation"
+      fi
+    
+    - ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST 'docker compose version'
+    
+    - echo "Loading Docker images..."
+    - |
+      ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+        set -euo pipefail
+        cd $PRODUCTION_REMOTE_PATH
+        sudo docker load -i message-service.tar
+        sudo docker load -i llm-service.tar
+        sudo docker load -i frontend.tar
+      EOF
+    
+    - echo "Starting production deployment with retry logic..."
+    - |
+      for attempt in 1 2 3; do
+        echo "Production deployment attempt $attempt..."
+        
+        if ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST "cd $PRODUCTION_REMOTE_PATH/infra && sudo docker compose -f docker-compose.prod.yml up -d --no-deps"; then
+          echo "Production services started successfully on attempt $attempt"
+          break
+        else
+          echo "Attempt $attempt failed"
+          if [ $attempt -lt 3 ]; then
+            echo "Cleaning up application services and waiting 30 seconds before retry..."
+            ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST "cd $PRODUCTION_REMOTE_PATH/infra && sudo docker compose -f docker-compose.prod.yml stop frontend message-service llm-service && sudo docker compose -f docker-compose.prod.yml rm -f frontend message-service llm-service" || true
+            sleep 30
+          else
+            echo "All production deployment attempts failed"
+            exit 1
+          fi
+        fi
+      done
+    
+    - echo "Verifying production deployment..."
+    - sleep 15
+    - ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST "cd $PRODUCTION_REMOTE_PATH/infra && sudo docker compose -f docker-compose.prod.yml ps"
+
+    # Step 4: Validate production deployment
+    - echo "=== PRODUCTION VALIDATION PHASE ==="
+    - apk add --no-cache curl
+    - |
+      echo "Validating production deployment..."
+      for i in {1..30}; do
+        if curl -f -s https://sparabot.com/health > /dev/null; then
+          echo "Production deployment validated successfully"
+          break
+        fi
+        echo "Attempt $i: Production service not ready, waiting..."
+        sleep 10
+        if [ $i -eq 30 ]; then
+          echo "Production deployment validation failed"
+          exit 1
+        fi
+      done
+
+    # Step 5: Cleanup tar files from production server
+    - echo "=== CLEANUP PRODUCTION TAR FILES ==="
+    - echo "Cleaning up tar files on production server"
+    - ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST "rm -f $PRODUCTION_REMOTE_PATH/*.tar"
+    
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
