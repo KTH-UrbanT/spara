@@ -13,11 +13,14 @@ stages:
 variables:
   COMPOSE_FILE_TEST: docker-compose.test.yml
   COMPOSE_FILE_TEST_CI: docker-compose.test.ci.yml
-  REMOTE_USER: ubuntu
-  REMOTE_HOST: $STAGING_HOST
-  REMOTE_PATH: /home/ubuntu/spara
 
-  SSH_TEST_REMOTE_HOST_KEY: $SSH_STAGING_HOST_KEY
+  STAGING_HOST: $STAGING_HOST
+  STAGING_HOST_USER: ubuntu
+  STAGING_HOST_KEY: $STAGING_HOST_KEY
+  STAGING_HOST_REMOTE_PATH: /home/ubuntu/spara
+
+  DEPLOYMENT_HOST: $DEPLOYMENT_HOST
+
   SSH_GITHUB_PRIVATE_KEY: $SSH_GITHUB_KEY
   # Instead of using the repository from GitLab,
   # we get a fresh copy from GitHub. This reduces
@@ -29,12 +32,12 @@ variables:
 .cleanup_script_template: &cleanup_script
   - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
   - |
-    $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<EOF
+    $SSH_CMD $STAGING_HOST_USER@$STAGING_HOST <<EOF
       set -euo pipefail
 
       echo "Stopping containers if compose file exists..."
-      if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
-        cd $REMOTE_PATH/infra
+      if [ -d "$STAGING_HOST_REMOTE_PATH/infra" ] && [ -f "$STAGING_HOST_REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
+        cd $STAGING_HOST_REMOTE_PATH/infra
         sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true
         echo "Stopped existing containers."
       else
@@ -85,12 +88,12 @@ before_script:
   - mkdir -p ~/.ssh
   - echo "$SSH_GITHUB_PRIVATE_KEY" > ~/.ssh/github_key
   - chmod 600 ~/.ssh/github_key
-  - echo "$SSH_TEST_REMOTE_HOST_KEY" > ~/.ssh/test_remote_key
+  - echo "$STAGING_HOST_KEY" > ~/.ssh/test_remote_key
   - chmod 600 ~/.ssh/test_remote_key
 
   # trust hosts
   - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
-  - ssh-keyscan -H $REMOTE_HOST >> ~/.ssh/known_hosts
+  - ssh-keyscan -H $STAGING_HOST >> ~/.ssh/known_hosts
   
   # Configure git user for all jobs
   - git config --global user.email "ci@sparabot.com"
@@ -224,48 +227,48 @@ test_all_services:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # Combined remote operations - cleanup, sync, deploy, and validate
-# This job holds the remote_test resource lock from beginning to end
+# This job holds the remote_staging resource lock from beginning to end
 # Only runs after tests pass successfully on GitLab servers
-deploy_and_validate_remote:
+deploy_and_validate_remote_staging:
   needs:
     - build_images
     - prepare_environment
     - test_all_services  # Wait for tests to pass before deploying
   stage: deploy
   image: alpine:3.18
-  resource_group: remote_test
+  resource_group: remote_staging
   interruptible: false  # Don't interrupt deployment once started
   script:
     - set -euo pipefail
     
     # Step 1: Cleanup (from cleanup_remote)
     - echo "=== CLEANUP PHASE ==="
-    - echo "Cleaning up remote server before deployment"
+    - echo "Cleaning up staging server before deployment"
     - *cleanup_script
 
     # Step 2: Sync (from sync_staging)
     - echo "=== SYNC PHASE ==="
-    - echo "Preparing and syncing files to remote server"
-    - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "sudo rm -rf $REMOTE_PATH/*"
-    - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "mkdir -p $(dirname $REMOTE_PATH)"
-    - rsync -avz -e "$SSH_CMD" infra/ $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/infra
-    - $SSH_CMD $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH/message-service $REMOTE_PATH/llm-service $REMOTE_PATH/frontend"
-    - rsync -avz -e "$SSH_CMD" message-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/message-service/.env
-    - rsync -avz -e "$SSH_CMD" llm-service/.env $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/llm-service/.env
-    - rsync -avz -e "$SSH_CMD" message-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" llm-service.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" frontend.tar $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+    - echo "Preparing and syncing files to staging server"
+    - $SSH_CMD $STAGING_HOST_USER@$STAGING_HOST "sudo rm -rf $STAGING_HOST_REMOTE_PATH/*"
+    - $SSH_CMD $STAGING_HOST_USER@$STAGING_HOST "mkdir -p $(dirname $STAGING_HOST_REMOTE_PATH)"
+    - rsync -avz -e "$SSH_CMD" infra/ $STAGING_HOST_USER@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/infra
+    - $SSH_CMD $STAGING_HOST_USER@$STAGING_HOST "mkdir -p $STAGING_HOST_REMOTE_PATH/message-service $STAGING_HOST_REMOTE_PATH/llm-service $STAGING_HOST_REMOTE_PATH/frontend"
+    - rsync -avz -e "$SSH_CMD" message-service/.env $STAGING_HOST_USER@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/message-service/.env
+    - rsync -avz -e "$SSH_CMD" llm-service/.env $STAGING_HOST_USER@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/llm-service/.env
+    - rsync -avz -e "$SSH_CMD" message-service.tar $STAGING_HOST_USER@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" llm-service.tar $STAGING_HOST_USER@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" frontend.tar $STAGING_HOST_USER@$STAGING_HOST:$STAGING_HOST_REMOTE_PATH/
 
     # Step 3: Deploy (from deploy_test_env_staging)
     - echo "=== DEPLOY PHASE ==="
-    - echo "Deploying to test staging server"
+    - echo "Deploying to staging server"
     - |
-      DOCKER_STATUS=$(ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
+      DOCKER_STATUS=$(ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
       echo "Docker status: $DOCKER_STATUS"
       
       if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
         echo "Installing Docker..."
-        ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<'EOF'
+        ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST <<'EOF'
           set -euo pipefail
           echo "Installing Docker and docker compose plugin..."
           sudo apt update
@@ -281,13 +284,13 @@ deploy_and_validate_remote:
         echo "Docker already installed, skipping installation"
       fi
     
-    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST 'docker compose version'
+    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST 'docker compose version'
     
     - echo "Loading Docker images..."
     - |
-      ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST <<EOF
+      ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST <<EOF
         set -euo pipefail
-        cd $REMOTE_PATH
+        cd $STAGING_HOST_REMOTE_PATH
         sudo docker load -i message-service.tar
         sudo docker load -i llm-service.tar
         sudo docker load -i frontend.tar
@@ -298,14 +301,14 @@ deploy_and_validate_remote:
       for attempt in 1 2 3; do
         echo "Deployment attempt $attempt..."
         
-        if ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
+        if ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
           echo "Services started successfully on attempt $attempt"
           break
         else
           echo "Attempt $attempt failed"
           if [ $attempt -lt 3 ]; then
             echo "Cleaning up and waiting 30 seconds before retry..."
-            ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
+            ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
             sleep 30
           else
             echo "All deployment attempts failed"
@@ -316,7 +319,7 @@ deploy_and_validate_remote:
     
     - echo "Verifying deployment..."
     - sleep 10
-    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
+    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "cd $STAGING_HOST_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
 
     # Step 4: Validate (from validate_deployment)
     - echo "=== VALIDATION PHASE ==="
@@ -338,8 +341,8 @@ deploy_and_validate_remote:
 
     # Step 5: Cleanup tar files (from cleanup_tar_files)
     - echo "=== CLEANUP TAR FILES ==="
-    - echo "Cleaning up tar files on remote server"
-    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "rm -f $REMOTE_PATH/*.tar"
+    - echo "Cleaning up tar files on staging server"
+    - ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no $STAGING_HOST_USER@$STAGING_HOST "rm -f $STAGING_HOST_REMOTE_PATH/*.tar"
     
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -351,7 +354,7 @@ tag_and_merge:
   image: alpine:3.18
   interruptible: false  # Don't interrupt tagging once started
   needs:
-    - deploy_and_validate_remote
+    - deploy_and_validate_remote_staging
     - test_all_services  # To get the tag names from dotenv
     - prepare_environment # To get submodule SHAs
   script:
@@ -404,12 +407,23 @@ tag_and_merge:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
+# Cleanup job that runs only on pipeline failure
+cleanup_on_failure:
+  stage: finish
+  image: alpine:3.18
+  resource_group: remote_staging
+  script: *cleanup_script
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+      when: on_failure
+  allow_failure: true
+
 # Manually triggered job to merge the assembly repo to main
 # This job must be manually triggered after successful tagging
 merge_assembly_to_main:
   stage: finish
   image: alpine:3.18
-  resource_group: remote_productions
+  resource_group: remote_staging
   needs:
     - tag_and_merge  # To get the assembly tag
   script:
@@ -434,14 +448,7 @@ merge_assembly_to_main:
       when: manual
       allow_failure: false
 
-# Cleanup job that runs only on pipeline failure
-cleanup_on_failure:
-  stage: finish
-  image: alpine:3.18
-  resource_group: remote_test
-  script: *cleanup_script
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-      when: on_failure
-  allow_failure: true
-
+# On commit to main branch, we clean the production deployment server,
+# similar to how we do it for the test branch. Clone and then
+# deploy to production.
+#deploy_and_validate_remote_production:
