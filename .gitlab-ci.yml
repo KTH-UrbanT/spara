@@ -230,7 +230,7 @@ test_all_services:
 
 # Cleanup job for the remote test server
 cleanup_remote_test:
-  stage: finish
+  stage: prepare
   image: alpine:3.18
   resource_group: remote_test
   script: *cleanup_script
@@ -244,7 +244,7 @@ deploy_and_validate_remote:
   needs:
     - build_images
     - prepare_environment
-    - cleanup_remote_test  # Ensure cleanup is done before deploying
+    - cleanup_remote_test # Ensure cleanup is done before deploying
     - test_all_services  # Wait for tests to pass before deploying
   stage: deploy
   image: alpine:3.18
