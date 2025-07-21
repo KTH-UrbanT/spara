@@ -4,14 +4,6 @@
 # is needed, since the GitLab runners starts with a fresh
 # Docker image for each job.
 
-# Workflow rules to cancel older pipelines when new commits are pushed
-workflow:
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-      auto_cancel:
-        on_new_commit: interruptible
-    - when: never
-
 stages:
   - prepare
   - test
@@ -111,7 +103,6 @@ before_script:
 prepare_environment:
   stage: prepare
   image: alpine:3.18
-  resource_group: gitlab
   interruptible: true
   script:
     - set -euo pipefail
@@ -145,7 +136,6 @@ prepare_environment:
 build_images:
   stage: prepare
   image: docker:24.0-cli
-  resource_group: gitlab
   interruptible: true
   needs: 
     - prepare_environment
@@ -177,7 +167,6 @@ build_images:
 test_all_services:
   stage: test
   image: docker:24.0-cli
-  resource_group: gitlab
   interruptible: true
   needs:
     - build_images
@@ -228,15 +217,6 @@ test_all_services:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Cleanup job for the remote test server
-cleanup_remote_test:
-  stage: prepare
-  image: alpine:3.18
-  resource_group: remote_test
-  script: *cleanup_script
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
 # Combined remote operations - cleanup, sync, deploy, and validate
 # This job holds the remote_test resource lock from beginning to end
 # Only runs after tests pass successfully on GitLab servers
@@ -255,42 +235,8 @@ deploy_and_validate_remote:
     
     # Step 1: Cleanup (from cleanup_remote)
     - echo "=== CLEANUP PHASE ==="
-    - export SSH_CMD="ssh -i ~/.ssh/test_remote_key -o StrictHostKeyChecking=no"
-    - |
-      $SSH_CMD $REMOTE_USER@$REMOTE_HOST <<EOF
-        set -euo pipefail
-
-        echo "Stopping containers if compose file exists..."
-        if [ -d "$REMOTE_PATH/infra" ] && [ -f "$REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
-          cd $REMOTE_PATH/infra
-          sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true
-          echo "Stopped existing containers."
-        else
-          echo "No existing containers to stop or compose file not found."
-        fi
-
-        echo "Disk usage before cleanup:"
-        df -h /
-
-        echo "Targeted Docker cleanup..."
-        sudo docker rm \$(sudo docker ps -aq -f status=exited) 2>/dev/null || true
-        sudo docker rmi \$(sudo docker images -f dangling=true -q) 2>/dev/null || true
-        sudo docker volume rm \$(sudo docker volume ls -qf dangling=true) 2>/dev/null || true
-
-        echo "Cleaning up /tmp and old logs..."
-        find /tmp -mtime +7 -and -not -exec fuser -s {} ';' -exec rm -rf {} +
-        sudo find /var/log -type f -name "*.gz" -delete
-        sudo find /var/log -type f -name "*.1" -delete
-
-        echo "Disk usage after cleanup:"
-        df -h /
-
-        USAGE=\$(df / | awk 'NR==2 {print \$5}' | tr -d '%')
-        if [ "\$USAGE" -gt 90 ]; then
-          echo "ERROR: Root filesystem is still over 90% full. Please free up space before deploying."
-          exit 1
-        fi
-      EOF
+    - echo "Cleaning up remote server before deployment"
+    - *cleanup_script
 
     # Step 2: Sync (from sync_staging)
     - echo "=== SYNC PHASE ==="
