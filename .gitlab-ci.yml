@@ -139,6 +139,104 @@ prepare_environment:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
+# Build images
+# Here we build the Docker images for the services, using the Docker Compose file,
+# and save them as tar files for later use (to speed up deployment).
+build_images:
+  stage: prepare
+  image: docker:24.0-cli
+  resource_group: gitlab
+  interruptible: true
+  needs: 
+    - prepare_environment
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  script:
+    - set -euo pipefail
+
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache
+
+    - docker save -o message-service.tar message-service:test
+    - docker save -o llm-service.tar llm-service:test
+    - docker save -o frontend.tar frontend:test
+  artifacts:
+    paths:
+      - message-service.tar
+      - llm-service.tar
+      - frontend.tar
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+# Combined test job
+# Tests all services in dependency order: message-service and llm-service first (both depend on redis),
+# then frontend (depends on message-service). Tags all submodules after successful tests.
+test_all_services:
+  stage: test
+  image: docker:24.0-cli
+  resource_group: gitlab
+  interruptible: true
+  needs:
+    - build_images
+    - prepare_environment
+  services:
+    - docker:dind
+  variables:
+    GIT_STRATEGY: none # Don't clone the repo, rely on artifacts (might be redundant copy)
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  script:
+    - set -euo pipefail
+
+    # Load all Docker images
+    - docker load -i message-service.tar
+    - docker load -i llm-service.tar
+    - docker load -i frontend.tar
+    
+    # Start dependencies first (redis and postgres)
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d redis message_store
+    
+    # Test message-service (depends on redis and postgres)
+    - echo "Testing message-service..."
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
+    - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
+    
+    # Test llm-service (depends on redis)
+    - echo "Testing llm-service..."
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
+    - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
+    
+    # Test frontend (depends on message-service)
+    - echo "Testing frontend..."
+    - docker compose -f infra/$COMPOSE_FILE_TEST up -d frontend
+    - echo "Frontend tests placeholder"
+    
+    # Generate tag names for later use in tagging job
+    - touch combined_tags.env
+    - MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - echo "MESSAGE_SERVICE_TAG=$MESSAGE_TAG" >> combined_tags.env
+    - echo "LLM_SERVICE_TAG=$LLM_TAG" >> combined_tags.env
+    - echo "FRONTEND_TAG=$FRONTEND_TAG" >> combined_tags.env
+  artifacts:
+    reports:
+      dotenv: combined_tags.env
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+# Cleanup job for the remote test server
+cleanup_remote_test:
+  stage: finish
+  image: alpine:3.18
+  resource_group: remote_test
+  script: *cleanup_script
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
 # Combined remote operations - cleanup, sync, deploy, and validate
 # This job holds the remote_test resource lock from beginning to end
 # Only runs after tests pass successfully on GitLab servers
@@ -146,6 +244,7 @@ deploy_and_validate_remote:
   needs:
     - build_images
     - prepare_environment
+    - cleanup_remote_test  # Ensure cleanup is done before deploying
     - test_all_services  # Wait for tests to pass before deploying
   stage: deploy
   image: alpine:3.18
@@ -293,97 +392,6 @@ deploy_and_validate_remote:
     
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Build images
-# Here we build the Docker images for the services, using the Docker Compose file,
-# and save them as tar files for later use (to speed up deployment).
-build_images:
-  stage: prepare
-  image: docker:24.0-cli
-  resource_group: gitlab
-  interruptible: true
-  needs: 
-    - prepare_environment
-  services:
-    - docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
-    - set -euo pipefail
-
-    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache
-
-    - docker save -o message-service.tar message-service:test
-    - docker save -o llm-service.tar llm-service:test
-    - docker save -o frontend.tar frontend:test
-  artifacts:
-    paths:
-      - message-service.tar
-      - llm-service.tar
-      - frontend.tar
-    expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Combined test job
-# Tests all services in dependency order: message-service and llm-service first (both depend on redis),
-# then frontend (depends on message-service). Tags all submodules after successful tests.
-test_all_services:
-  stage: test
-  image: docker:24.0-cli
-  resource_group: gitlab
-  interruptible: true
-  needs:
-    - build_images
-    - prepare_environment
-  services:
-    - docker:dind
-  variables:
-    GIT_STRATEGY: none # Don't clone the repo, rely on artifacts (might be redundant copy)
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
-    - set -euo pipefail
-
-    # Load all Docker images
-    - docker load -i message-service.tar
-    - docker load -i llm-service.tar
-    - docker load -i frontend.tar
-    
-    # Start dependencies first (redis and postgres)
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d redis message_store
-    
-    # Test message-service (depends on redis and postgres)
-    - echo "Testing message-service..."
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
-    - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
-    
-    # Test llm-service (depends on redis)
-    - echo "Testing llm-service..."
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
-    - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
-    
-    # Test frontend (depends on message-service)
-    - echo "Testing frontend..."
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d frontend
-    - echo "Frontend tests placeholder"
-    
-    # Generate tag names for later use in tagging job
-    - touch combined_tags.env
-    - MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "MESSAGE_SERVICE_TAG=$MESSAGE_TAG" >> combined_tags.env
-    - echo "LLM_SERVICE_TAG=$LLM_TAG" >> combined_tags.env
-    - echo "FRONTEND_TAG=$FRONTEND_TAG" >> combined_tags.env
-  artifacts:
-    reports:
-      dotenv: combined_tags.env
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-
 
 # Tag the submodules and the assembly repo after successful tests.
 tagging:
