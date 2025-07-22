@@ -18,20 +18,20 @@ stages:
   - finish
 
 variables:
-  COMPOSE_FILE_TEST: docker-compose.test.yml
-  COMPOSE_FILE_TEST_CI: docker-compose.test.ci.yml
-  COMPOSE_FILE_PROD: docker-compose.prod.yml
+  COMPOSE_FILE_TEST:          docker-compose.test.yml
+  COMPOSE_FILE_TEST_CI:       docker-compose.test.ci.yml
+  COMPOSE_FILE_PROD:          docker-compose.prod.yml
 
   STAGING_HOST:               $SSH_STAGING_HOST
   STAGING_USERNAME:           $SSH_STAGING_USERNAME
   STAGING_KEY:                $SSH_STAGING_KEY
   STAGING_REMOTE_PATH:        /home/ubuntu/spara
 
-  #PRODUCTION_HOST:            $SSH_PRODUCTION_HOST
-  #PRODUCTION_USERNAME:        $SSH_PRODUCTION_USERNAME
-  #PRODUCTION_KEY:             $SSH_PRODUCTION_KEY
-  #PRODUCTION_PASSWORD:        $SSH_PRODUCTION_PASSWORD
-  #PRODUCTION_REMOTE_PATH:     $SSH_PRODUCTION_REMOTE_PATH
+  PRODUCTION_HOST:            $SSH_PRODUCTION_HOST
+  PRODUCTION_USERNAME:        $SSH_PRODUCTION_USERNAME
+  PRODUCTION_KEY:             $SSH_PRODUCTION_KEY
+  PRODUCTION_PASSWORD:        $SSH_PRODUCTION_PASSWORD
+  PRODUCTION_REMOTE_PATH:     $SSH_PRODUCTION_REMOTE_PATH
 
   SSH_GITHUB_PRIVATE_KEY: $SSH_GITHUB_KEY
   # Instead of using the repository from GitLab,
@@ -309,7 +309,7 @@ deploy_and_validate_remote_staging:
     - echo "=== CLEANUP PHASE ==="
     - echo "Cleaning up staging server before deployment"
     - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
-    - *cleanup_script
+    - *cleanup_production_script
 
     # Step 2: Sync (from sync_staging)
     - echo "=== SYNC PHASE ==="
@@ -479,7 +479,7 @@ cleanup_on_failure:
   resource_group: remote_staging
   script: 
     - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
-    - *cleanup_script
+    - *cleanup_production_script
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: on_failure

@@ -87,6 +87,9 @@ services:
 
 volumes:
   message_store_data:
+    external: true # volume must pre‑exist; Compose will never delete it
+  redis_data:
+    external: true
 
 networks:
   spara_network:
