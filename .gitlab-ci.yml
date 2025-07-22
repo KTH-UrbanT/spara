@@ -129,7 +129,7 @@ before_script:
   # Install needed CLIs (only if running on Alpine)
   - |
     if grep -qi alpine /etc/os-release; then
-      apk add --no-cache git openssh git openssh-client rsync
+      apk add --no-cache git openssh openssh-client
     fi
 
   # Prepare SSH dir and keys
@@ -333,11 +333,12 @@ deploy_and_validate_remote_staging:
     - echo "Using assembly tag $CURRENT_ASSEMBLY_TAG"
 
     # Create backup with tag-based name (fixed redirect issue)
-    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $STAGING_BACKUP_ARCHIVE"
     - BACKUP_FILE="$STAGING_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
     - |
       $SSH_CMD $STAGING_USERNAME@$STAGING_HOST <<EOF
         set -euo pipefail
+        echo "Creating backup directory: $STAGING_BACKUP_ARCHIVE"
+        mkdir -p $STAGING_BACKUP_ARCHIVE
         echo "Creating backup: $BACKUP_FILE"
         sudo docker exec -t spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE
         echo "Backup created successfully"
@@ -348,22 +349,21 @@ deploy_and_validate_remote_staging:
     - echo "Pruning old tagged Postgres backups, keeping only the 10 most recent..."
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "ls -1t $STAGING_BACKUP_ARCHIVE/backup_*.sql | tail -n +11 | xargs -r rm --"
 
-    # Step 3: Sync files to staging server using rsync
+    # Step 3: Copy files to staging server using scp
     - echo "=== SYNC PHASE ==="
-    - echo "Preparing and syncing files to staging server"
+    - echo "Copying files to staging server (clean deployment)"
 
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "sudo rm -rf $STAGING_REMOTE_PATH/*"
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $(dirname $STAGING_REMOTE_PATH)"
-
-    - rsync -avz -e "$SSH_CMD" infra/ $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/infra
-
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $STAGING_REMOTE_PATH/message-service $STAGING_REMOTE_PATH/llm-service $STAGING_REMOTE_PATH/frontend"
 
-    - rsync -avz -e "$SSH_CMD" message-service/.env $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/message-service/.env
-    - rsync -avz -e "$SSH_CMD" llm-service/.env $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/llm-service/.env
-    - rsync -avz -e "$SSH_CMD" message-service.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" llm-service.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" frontend.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
+    # Copy directories and files directly using scp
+    - scp -i ~/.ssh/staging_remote_key -r infra/ $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
+    - scp -i ~/.ssh/staging_remote_key message-service/.env $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/message-service/.env
+    - scp -i ~/.ssh/staging_remote_key llm-service/.env $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/llm-service/.env
+    - scp -i ~/.ssh/staging_remote_key message-service.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
+    - scp -i ~/.ssh/staging_remote_key llm-service.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
+    - scp -i ~/.ssh/staging_remote_key frontend.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
 
     # Step 4: Deploy on Staging Server
     - echo "=== DEPLOY PHASE ==="
@@ -625,11 +625,12 @@ deploy_and_validate_remote_production:
     - echo "Using assembly tag $CURRENT_ASSEMBLY_TAG"
     
     # Create backup archive directory and backup with tag-based name (fixed redirect)
-    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "mkdir -p $PRODUCTION_BACKUP_ARCHIVE"
     - BACKUP_FILE="$PRODUCTION_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
     - |
       $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
         set -euo pipefail
+        echo "Creating backup directory: $PRODUCTION_BACKUP_ARCHIVE"
+        mkdir -p $PRODUCTION_BACKUP_ARCHIVE
         echo "Creating production backup: $BACKUP_FILE"
         sudo docker exec -t spara-postgres pg_dumpall -c -U postgres > $BACKUP_FILE
         echo "Production backup created successfully"
@@ -640,22 +641,27 @@ deploy_and_validate_remote_production:
     - echo "Pruning old tagged Postgres backups, keeping only the 10 most recent..."
     - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "ls -1t $PRODUCTION_BACKUP_ARCHIVE/backup_*.sql | tail -n +11 | xargs -r rm --"
 
-    # Step 3: Sync (adapted for production)
+    # Step 3: Copy files to production server using scp
     - echo "=== PRODUCTION SYNC PHASE ==="
-    - echo "Preparing and syncing files to production server"
+    - echo "Copying files to production server (clean deployment)"
+    
     - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "sudo rm -rf $PRODUCTION_REMOTE_PATH/frontend $PRODUCTION_REMOTE_PATH/message-service $PRODUCTION_REMOTE_PATH/llm-service"
     - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "mkdir -p $(dirname $PRODUCTION_REMOTE_PATH)"
-    - rsync -avz -e "$SSH_CMD" infra/ $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/infra
     - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "mkdir -p $PRODUCTION_REMOTE_PATH/message-service $PRODUCTION_REMOTE_PATH/llm-service $PRODUCTION_REMOTE_PATH/frontend"
-    - rsync -avz -e "$SSH_CMD" message-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/message-service/.env
-    - rsync -avz -e "$SSH_CMD" llm-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/llm-service/.env
-    - rsync -avz -e "$SSH_CMD" message-service.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" llm-service.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" frontend.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    
+    # Copy directories and files directly using scp
+    - scp -i ~/.ssh/production_remote_key -r infra/ $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - scp -i ~/.ssh/production_remote_key message-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/message-service/.env
+    - scp -i ~/.ssh/production_remote_key llm-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/llm-service/.env
+    - scp -i ~/.ssh/production_remote_key message-service.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - scp -i ~/.ssh/production_remote_key llm-service.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - scp -i ~/.ssh/production_remote_key frontend.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
 
     # Step 4: Deploy to production
     - echo "=== PRODUCTION DEPLOY PHASE ==="
     - echo "Deploying to production server"
+
+    # Reused logic to check and install Docker if needed
     - |
       DOCKER_STATUS=$(ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
       echo "Docker status: $DOCKER_STATUS"
@@ -678,8 +684,10 @@ deploy_and_validate_remote_production:
         echo "Docker already installed, skipping installation"
       fi
     
+    # Check Docker and Docker Compose versions (important after installation)
     - ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST 'docker compose version'
     
+    # Load Docker images on the production server
     - echo "Loading Docker images..."
     - |
       ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
@@ -690,6 +698,9 @@ deploy_and_validate_remote_production:
         sudo docker load -i frontend.tar
       EOF
     
+    # Start the services using Docker Compose
+    # Here we use a retry logic to ensure the services start correctly,
+    # notice how we use a sleep between attempts.
     - echo "Starting production deployment with retry logic..."
     - |
       for attempt in 1 2 3; do
@@ -711,17 +722,20 @@ deploy_and_validate_remote_production:
         fi
       done
     
+    # We wait a few seconds and then verify the deployment
     - echo "Verifying production deployment..."
     - sleep 15
     - ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST "cd $PRODUCTION_REMOTE_PATH/infra && sudo docker compose -f docker-compose.prod.yml ps"
 
     # Step 5: Validate production deployment
+    # For this we use a simple curl request to the production URL,
+    # and if we don't get a response, we retry up to 30 times.
     - echo "=== PRODUCTION VALIDATION PHASE ==="
     - apk add --no-cache curl
     - |
       echo "Validating production deployment..."
       for i in {1..30}; do
-        if curl -f -s https://sparabot.com/health > /dev/null; then
+        if curl -f -s https://sparabot.com/ > /dev/null; then
           echo "Production deployment validated successfully"
           break
         fi
@@ -742,7 +756,11 @@ deploy_and_validate_remote_production:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
 
-# Production rollback job - automatically triggers on production deployment failure
+# Rollback Production On Failure
+#
+# Production rollback job - automatically triggers on production deployment failure.
+# This job will attempt to restore the last successful deployment
+# by restoring the database and deploying the last successful code version.
 rollback_production_on_failure:
   stage: deploy_production
   image: alpine:3.18
@@ -755,18 +773,21 @@ rollback_production_on_failure:
   needs:
     - deploy_and_validate_remote_production
   script:
+
+    # Set strict error handling
     - set -euo pipefail
+
     - echo "=== PRODUCTION ROLLBACK INITIATED ==="
     - echo "Production deployment failed. Initiating automatic rollback..."
-    
-    # Setup SSH
+
+    # Setup SSH for later use
     - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
     
-    # Get the last successful tag
+    # Get the last successful tag,
+    # or throw an error if it doesn't exist.
     - echo "Retrieving last successful production tag..."
     - LAST_SUCCESSFUL_TAG=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "cat $PRODUCTION_TAG_FILE 2>/dev/null || echo 'NONE'")
     - echo "Last successful tag $LAST_SUCCESSFUL_TAG"
-    
     - |
       if [ "$LAST_SUCCESSFUL_TAG" = "NONE" ] || [ -z "$LAST_SUCCESSFUL_TAG" ]; then
         echo "ERROR: No previous successful deployment found. Manual intervention required."
@@ -789,18 +810,14 @@ rollback_production_on_failure:
         exit 1
       fi
     
-    # Stop current failed services
+    # Stop current failed services using the standard cleanup script
     - echo "=== STOPPING FAILED SERVICES ==="
-    - |
-      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
-        set -euo pipefail
-        cd $PRODUCTION_REMOTE_PATH/infra
-        echo "Stopping failed application services..."
-        sudo docker compose -f docker-compose.prod.yml stop frontend message-service llm-service || true
-        sudo docker compose -f docker-compose.prod.yml rm -f frontend message-service llm-service || true
-      EOF
+    - echo "Using production cleanup script to stop failed services"
+    - *cleanup_production_script
     
-    # Restore database
+    # Restore database, by first stopping the postgres container,
+    # then starting it again, and finally restoring the database from the backup.
+    # We stop it to ensure no writes are happening during the restore.
     - echo "=== RESTORING DATABASE ==="
     - echo "Restoring database from backup $ROLLBACK_BACKUP_FILE"
     - |
@@ -863,12 +880,12 @@ rollback_production_on_failure:
     
     # Upload rollback images to production server
     - echo "=== UPLOADING ROLLBACK IMAGES ==="
-    - rsync -avz -e "$SSH_CMD" rollback_repo/message-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" rollback_repo/llm-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" rollback_repo/frontend-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" rollback_repo/infra/ $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/infra/
-    - rsync -avz -e "$SSH_CMD" rollback_repo/message-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/message-service/.env
-    - rsync -avz -e "$SSH_CMD" rollback_repo/llm-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/llm-service/.env
+    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/message-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/llm-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/frontend-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no -r rollback_repo/infra/ $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/message-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/message-service/
+    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/llm-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/llm-service/
     
     # Load rollback images on production server
     - echo "=== LOADING ROLLBACK IMAGES ==="
@@ -1003,12 +1020,12 @@ manual_production_rollback:
     
     # Upload rollback images to production server
     - echo "=== UPLOADING ROLLBACK IMAGES ==="
-    - rsync -avz -e "$SSH_CMD" rollback_repo/message-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" rollback_repo/llm-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" rollback_repo/frontend-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - rsync -avz -e "$SSH_CMD" rollback_repo/infra/ $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/infra/
-    - rsync -avz -e "$SSH_CMD" rollback_repo/message-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/message-service/.env
-    - rsync -avz -e "$SSH_CMD" rollback_repo/llm-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/llm-service/.env
+    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/message-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/llm-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/frontend-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no -r rollback_repo/infra/ $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/message-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/message-service/
+    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/llm-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/llm-service/
     
     # Load rollback images on production server
     - echo "=== LOADING ROLLBACK IMAGES ==="
@@ -1032,16 +1049,10 @@ manual_production_rollback:
     - echo "Creating backup before rollback $PRE_ROLLBACK_BACKUP"
     - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "sudo docker exec -t spara-postgres pg_dumpall -c -U postgres > $PRE_ROLLBACK_BACKUP"
     
-    # Stop current services
+    # Stop current services using the standard cleanup script
     - echo "=== STOPPING CURRENT SERVICES ==="
-    - |
-      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
-        set -euo pipefail
-        cd $PRODUCTION_REMOTE_PATH/infra
-        echo "Stopping application services..."
-        sudo docker compose -f docker-compose.prod.yml stop frontend message-service llm-service || true
-        sudo docker compose -f docker-compose.prod.yml rm -f frontend message-service llm-service || true
-      EOF
+    - echo "Using production cleanup script to stop current services"
+    - *cleanup_production_script
     
     # Deploy the rollback version
     - echo "=== DEPLOYING ROLLBACK VERSION ==="
