@@ -29,7 +29,27 @@ services:
       POSTGRES_DB: message_store
     volumes:
       - message_store_data:/var/lib/postgresql/data
-      - ../shared/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    #  - ../shared/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  ############################
+  #  2.5) Database Migration #
+  ############################
+  flyway:
+    image: flyway/flyway:9-alpine
+    container_name: spara-flyway
+    networks:
+      - spara_network
+    depends_on:
+      - message_store
+    environment:
+      - FLYWAY_URL=jdbc:postgresql://message_store:5432/message_store
+      - FLYWAY_USER=postgres
+      - FLYWAY_PASSWORD=postgres
+      - FLYWAY_BASELINE_ON_MIGRATE=true
+    volumes:
+      - ../shared/db/migrations:/flyway/sql:ro
+    command: migrate
+    restart: "no"  # Run once and exit
 
   ############################
   #  3) Message Service      #
