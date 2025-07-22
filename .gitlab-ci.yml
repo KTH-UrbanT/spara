@@ -142,6 +142,7 @@ before_script:
   - git config --global user.name "CI Bot"
 
 # Prepare the environment
+#
 # Here we load the submodules as given, from GitHub (using SSH_GITHUB_PRIVATE_KEY).
 # We do this since GitHub allways has the latest versions, and pulling from
 # GitLab can lead to issues with submodule SHAs.
@@ -189,8 +190,10 @@ prepare_environment:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # Build images
+#
 # Here we build the Docker images for the services, using the Docker Compose file,
-# and save them as tar files for later use (to speed up deployment).
+# and save them as tar files for later use (to speed up deployment). The tar-files
+# are sent as artifacts.
 build_images:
   stage: prepare
   image: docker:24.0-cli
@@ -203,10 +206,14 @@ build_images:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+    # Set strict error handling
     - set -euo pipefail
 
+    # Build Docker images without using cached layers
+    # to ensure we always have the latest code.
     - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache
 
+    # Save Docker images as tar files
     - docker save -o message-service.tar message-service:test
     - docker save -o llm-service.tar llm-service:test
     - docker save -o frontend.tar frontend:test
@@ -219,9 +226,11 @@ build_images:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Combined test job
-# Tests all services in dependency order: message-service and llm-service first (both depend on redis),
-# then frontend (depends on message-service). Tags all submodules after successful tests.
+# Test all services
+#
+# Tests all services in dependency order:
+# message-service and llm-service first (both depend on redis),
+# then frontend (depends on message-service).
 test_all_services:
   stage: test
   image: docker:24.0-cli
@@ -236,6 +245,8 @@ test_all_services:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
   script:
+
+    # Set strict error handling
     - set -euo pipefail
 
     # Load all Docker images
@@ -263,9 +274,11 @@ test_all_services:
     
     # Generate tag names for later use in tagging job
     - touch combined_tags.env
+    
     - MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+
     - echo "MESSAGE_SERVICE_TAG=$MESSAGE_TAG" >> combined_tags.env
     - echo "LLM_SERVICE_TAG=$LLM_TAG" >> combined_tags.env
     - echo "FRONTEND_TAG=$FRONTEND_TAG" >> combined_tags.env
