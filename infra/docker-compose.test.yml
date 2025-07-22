@@ -110,9 +110,9 @@ services:
 
 volumes:
   message_store_data:
-    external: true  # volume must pre‑exist; Compose will never delete it
+    driver: local  # Docker managed volume - will be created automatically
   redis_data:
-    external: true
+    driver: local  # Docker managed volume - will be created automatically
 
 networks:
   spara_test_network:

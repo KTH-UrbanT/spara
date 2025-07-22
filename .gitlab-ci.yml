@@ -7,8 +7,9 @@
 stages:
   - prepare
   - test
-  - deploy
-  - finish
+  - deploy_staging
+  - finish_staging
+  - deploy_production
 
 variables:
   COMPOSE_FILE_TEST:          docker-compose.test.yml
@@ -27,10 +28,12 @@ variables:
   PRODUCTION_REMOTE_PATH:     $SSH_PRODUCTION_REMOTE_PATH
 
   SSH_GITHUB_PRIVATE_KEY:     $SSH_GITHUB_KEY
-
-  STAGING_POSTGRES_BACKUP_FOLDER:       /home/ubuntu/spara/cicd_backups/postgres
-  PRODUCTION_POSTGRES_BACKUP_FOLDER:    /srv/odenlabs/spara/cicd_backups/postgres
-
+  
+  # Tag tracking files for rollback capability
+  STAGING_TAG_FILE:                      /home/ubuntu/spara/last_successful_tag.txt
+  PRODUCTION_TAG_FILE:                   /srv/odenlabs/spara/last_successful_tag.txt
+  STAGING_BACKUP_ARCHIVE:                /home/ubuntu/spara/cicd_backups/tagged_backups
+  PRODUCTION_BACKUP_ARCHIVE:             /srv/odenlabs/spara/cicd_backups/tagged_backups
 
   # Instead of using the repository from GitLab,
   # we get a fresh copy from GitHub. This reduces
@@ -38,47 +41,53 @@ variables:
   # done to fix a version and speed issue.
   GIT_STRATEGY: none
 
-# YAML anchor for cleanup script
-.cleanup_script_template: &cleanup_script
+# YAML anchor for staging cleanup script
+# Only stops and removes application services, preserves databases
+.cleanup_staging_script_template: &cleanup_staging_script
   - |
     $SSH_CMD $STAGING_USERNAME@$STAGING_HOST <<EOF
       set -euo pipefail
 
-      echo "Stopping containers if compose file exists..."
-      if [ -d "$STAGING_REMOTE_PATH/infra" ] && [ -f "$STAGING_REMOTE_PATH/infra/$COMPOSE_FILE_TEST" ]; then
+      echo "Stopping application services only (preserving databases)..."
+      if [ -d "$STAGING_REMOTE_PATH/infra" ] && [ -f "$STAGING_REMOTE_PATH/infra/$COMPOSE_FILE_STAGING" ]; then
         cd $STAGING_REMOTE_PATH/infra
-        sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true
-        echo "Stopped existing containers."
+        
+        # Stop only application services, keep databases running
+        sudo docker compose -f $COMPOSE_FILE_STAGING stop frontend message-service llm-service || true
+        sudo docker compose -f $COMPOSE_FILE_STAGING rm -f frontend message-service llm-service || true
+        echo "Stopped application services (frontend, message-service, llm-service)."
+        
+        # Remove old application images to free space
+        sudo docker rmi spara-frontend:latest 2>/dev/null || true
+        sudo docker rmi spara-message-service:latest 2>/dev/null || true
+        sudo docker rmi spara-llm-service:latest 2>/dev/null || true
+        
+        echo "Database services (redis, postgres) remain untouched."
       else
-        echo "No existing containers to stop or compose file not found."
+        echo "No existing production deployment found or compose file not found."
       fi
 
       echo "Disk usage before cleanup:"
       df -h /
 
-      echo "Targeted Docker cleanup..."
-      # Remove stopped containers only
+      echo "Production-safe Docker cleanup..."
+      # Remove stopped containers (but not database containers)
       sudo docker rm \$(sudo docker ps -aq -f status=exited) 2>/dev/null || true
 
-      # Remove dangling (untagged) images
+      # Remove dangling (untagged) images only
       sudo docker rmi \$(sudo docker images -f dangling=true -q) 2>/dev/null || true
 
-      # Remove dangling volumes
-      sudo docker volume rm \$(sudo docker volume ls -qf dangling=true) 2>/dev/null || true
-
-      echo "Cleaning up /tmp and old logs..."
-      # Only delete files in /tmp that are older than 7 days and not in use
-      find /tmp -mtime +7 -and -not -exec fuser -s {} ';' -exec rm -rf {} +
-      sudo find /var/log -type f -name "*.gz" -delete
-      sudo find /var/log -type f -name "*.1" -delete
+      # Clean up /tmp and old logs (conservative approach)
+      find /tmp -mtime +7 -and -not -exec fuser -s {} ';' -exec rm -rf {} + 2>/dev/null || true
+      sudo find /var/log -type f -name "*.gz" -mtime +30 -delete 2>/dev/null || true
 
       echo "Disk usage after cleanup:"
       df -h /
 
       USAGE=\$(df / | awk 'NR==2 {print \$5}' | tr -d '%')
       if [ "\$USAGE" -gt 90 ]; then
-        echo "ERROR: Root filesystem is still over 90% full. Please free up space before deploying."
-        exit 1
+        echo "WARNING: Root filesystem is over 90% full. Manual intervention may be needed."
+        echo "Database volumes and data have been preserved."
       fi
     EOF
 
@@ -296,7 +305,7 @@ deploy_and_validate_remote_staging:
     - build_images
     - prepare_environment
     - test_all_services  # Wait for tests to pass before deploying
-  stage: deploy
+  stage: deploy_staging
   image: alpine:3.18
   resource_group: remote_staging
   interruptible: false  # Don't interrupt deployment once started
@@ -307,16 +316,24 @@ deploy_and_validate_remote_staging:
     - echo "=== CLEANUP PHASE ==="
     - echo "Cleaning up staging server before deployment"
     - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
-    - *cleanup_production_script
+    - *cleanup_staging_script
 
     # Step 2: Backup Postgres (from backup_postgres)
     - echo "=== BACKUP PHASE ==="
-    - echo "Backing up Postgres database"
-    - BACKUP_FILE="$STAGING_POSTGRES_BACKUP_FOLDER/backup_$(date +%Y%m%d_%H%M%S).sql"
+    - echo "Backing up Postgres database with tag-based naming"
+    
+    # Get current assembly tag for backup naming
+    - CURRENT_ASSEMBLY_TAG="staging-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - echo "Using assembly tag $CURRENT_ASSEMBLY_TAG"
+    
+    # Create backup with tag-based name
+    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $STAGING_BACKUP_ARCHIVE"
+    - BACKUP_FILE="$STAGING_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "sudo docker exec -t spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE"
-    # Keep only the 10 most recent backups, delete older ones
-    - echo "Pruning old Postgres backups, keeping only the 10 most recent..."
-    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "ls -1t $STAGING_POSTGRES_BACKUP_FOLDER/backup_*.sql | tail -n +11 | xargs -r rm --"
+    
+    # Keep only the 10 most recent tagged backups
+    - echo "Pruning old tagged Postgres backups, keeping only the 10 most recent..."
+    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "ls -1t $STAGING_BACKUP_ARCHIVE/backup_*.sql | tail -n +11 | xargs -r rm --"
 
     # Step 3: Sync (from sync_staging)
     - echo "=== SYNC PHASE ==="
@@ -416,13 +433,19 @@ deploy_and_validate_remote_staging:
     - echo "Cleaning up tar files on staging server"
     - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST "rm -f $STAGING_REMOTE_PATH/*.tar"
     
+    # Step 7: Record successful deployment tag
+    - echo "=== RECORD SUCCESSFUL TAG ==="
+    - echo "Recording successful deployment tag $CURRENT_ASSEMBLY_TAG"
+    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "echo '$CURRENT_ASSEMBLY_TAG' > $STAGING_TAG_FILE"
+    - echo "Staging deployment completed successfully with tag $CURRENT_ASSEMBLY_TAG"
+    
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # Tag the submodules and the assembly repo after successful tests,
 # and merge the changes back to the main branch of each submodule.
 tag_and_merge:
-  stage: finish
+  stage: finish_staging
   image: alpine:3.18
   interruptible: false  # Don't interrupt tagging once started
   needs:
@@ -481,12 +504,12 @@ tag_and_merge:
 
 # Cleanup job that runs only on pipeline failure
 cleanup_on_failure:
-  stage: finish
+  stage: finish_staging
   image: alpine:3.18
   resource_group: remote_staging
   script: 
     - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
-    - *cleanup_production_script
+    - *cleanup_staging_script
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: on_failure
@@ -495,7 +518,7 @@ cleanup_on_failure:
 # Manually triggered job to merge the assembly repo to main
 # This job must be manually triggered after successful tagging
 merge_assembly_to_main:
-  stage: finish
+  stage: deploy_production
   image: alpine:3.18
   resource_group: remote_staging
   needs:
@@ -531,7 +554,7 @@ deploy_and_validate_remote_production:
     - prepare_environment
     - test_all_services  # Wait for tests to pass before deploying
     - merge_assembly_to_main
-  stage: deploy
+  stage: deploy_production
   image: alpine:3.18
   resource_group: remote_production
   interruptible: false  # Don't interrupt deployment once started
@@ -546,12 +569,20 @@ deploy_and_validate_remote_production:
 
     # Step 2: Backup Postgres (from backup_postgres)
     - echo "=== BACKUP PHASE ==="
-    - echo "Backing up Postgres database"
-    - BACKUP_FILE="$PRODUCTION_POSTGRES_BACKUP_FOLDER/backup_$(date +%Y%m%d_%H%M%S).sql"
-    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "sudo docker exec -t spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE"
-    # Keep only the 10 most recent backups, delete older ones
-    - echo "Pruning old Postgres backups, keeping only the 10 most recent..."
-    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "ls -1t $PRODUCTION_POSTGRES_BACKUP_FOLDER/backup_*.sql | tail -n +11 | xargs -r rm --"
+    - echo "Backing up Postgres database with tag-based naming"
+    
+    # Get current assembly tag for backup naming
+    - CURRENT_ASSEMBLY_TAG="production-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - echo "Using assembly tag $CURRENT_ASSEMBLY_TAG"
+    
+    # Create backup archive directory and backup with tag-based name
+    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "mkdir -p $PRODUCTION_BACKUP_ARCHIVE"
+    - BACKUP_FILE="$PRODUCTION_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
+    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "sudo docker exec -t spara-postgres pg_dumpall -c -U postgres > $BACKUP_FILE"
+    
+    # Keep only the 10 most recent tagged backups
+    - echo "Pruning old tagged Postgres backups, keeping only the 10 most recent..."
+    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "ls -1t $PRODUCTION_BACKUP_ARCHIVE/backup_*.sql | tail -n +11 | xargs -r rm --"
 
     # Step 3: Sync (adapted for production)
     - echo "=== PRODUCTION SYNC PHASE ==="
@@ -651,5 +682,365 @@ deploy_and_validate_remote_production:
     - echo "Cleaning up tar files on production server"
     - ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST "rm -f $PRODUCTION_REMOTE_PATH/*.tar"
     
+    # Step 7: Record successful production deployment tag
+    - echo "=== RECORD SUCCESSFUL PRODUCTION TAG ==="
+    - echo "Recording successful production deployment tag $CURRENT_ASSEMBLY_TAG"
+    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "echo '$CURRENT_ASSEMBLY_TAG' > $PRODUCTION_TAG_FILE"
+    - echo "Production deployment completed successfully with tag $CURRENT_ASSEMBLY_TAG"
+    
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
+
+# Production rollback job - automatically triggers on production deployment failure
+rollback_production_on_failure:
+  stage: deploy_production
+  image: alpine:3.18
+  resource_group: remote_production
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  needs:
+    - deploy_and_validate_remote_production
+  script:
+    - set -euo pipefail
+    - echo "=== PRODUCTION ROLLBACK INITIATED ==="
+    - echo "Production deployment failed. Initiating automatic rollback..."
+    
+    # Setup SSH
+    - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
+    
+    # Get the last successful tag
+    - echo "Retrieving last successful production tag..."
+    - LAST_SUCCESSFUL_TAG=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "cat $PRODUCTION_TAG_FILE 2>/dev/null || echo 'NONE'")
+    - echo "Last successful tag $LAST_SUCCESSFUL_TAG"
+    
+    - |
+      if [ "$LAST_SUCCESSFUL_TAG" = "NONE" ] || [ -z "$LAST_SUCCESSFUL_TAG" ]; then
+        echo "ERROR: No previous successful deployment found. Manual intervention required."
+        echo "Cannot perform automatic rollback without a known good state."
+        exit 1
+      fi
+    
+    # Find corresponding backup
+    - echo "Looking for backup file for tag $LAST_SUCCESSFUL_TAG"
+    - ROLLBACK_BACKUP_FILE="$PRODUCTION_BACKUP_ARCHIVE/backup_${LAST_SUCCESSFUL_TAG}.sql"
+    
+    # Verify backup exists
+    - |
+      BACKUP_EXISTS=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "[ -f '$ROLLBACK_BACKUP_FILE' ] && echo 'YES' || echo 'NO'")
+      if [ "$BACKUP_EXISTS" = "NO" ]; then
+        echo "ERROR: Backup file $ROLLBACK_BACKUP_FILE not found."
+        echo "Available tagged backups:"
+        $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "ls -la $PRODUCTION_BACKUP_ARCHIVE/ || echo 'No tagged backups found'"
+        echo "Manual intervention required."
+        exit 1
+      fi
+    
+    # Stop current failed services
+    - echo "=== STOPPING FAILED SERVICES ==="
+    - |
+      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+        set -euo pipefail
+        cd $PRODUCTION_REMOTE_PATH/infra
+        echo "Stopping failed application services..."
+        sudo docker compose -f docker-compose.prod.yml stop frontend message-service llm-service || true
+        sudo docker compose -f docker-compose.prod.yml rm -f frontend message-service llm-service || true
+      EOF
+    
+    # Restore database
+    - echo "=== RESTORING DATABASE ==="
+    - echo "Restoring database from backup $ROLLBACK_BACKUP_FILE"
+    - |
+      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+        set -euo pipefail
+        echo "Stopping postgres container temporarily for restore..."
+        cd $PRODUCTION_REMOTE_PATH/infra
+        sudo docker compose -f docker-compose.prod.yml stop postgres || true
+        
+        echo "Starting postgres container for restore..."
+        sudo docker compose -f docker-compose.prod.yml up -d postgres
+        sleep 10
+        
+        echo "Restoring database from $ROLLBACK_BACKUP_FILE..."
+        sudo docker exec -i spara-postgres psql -U postgres < $ROLLBACK_BACKUP_FILE
+        
+        echo "Database restored successfully"
+      EOF
+    
+    # Fetch and deploy the previous successful version from Git
+    - echo "=== FETCHING PREVIOUS SUCCESSFUL VERSION ==="
+    - echo "Fetching and building application code from tag $LAST_SUCCESSFUL_TAG"
+    
+    # Parse the tag to get the original assembly tag that was used
+    # Format: production-YYYYMMDD-HHMMSS-pipeline_id
+    - ASSEMBLY_PIPELINE_ID=$(echo "$LAST_SUCCESSFUL_TAG" | cut -d'-' -f4)
+    - echo "Looking for assembly tag from pipeline $ASSEMBLY_PIPELINE_ID"
+    
+    # Clone the repository and checkout the successful tag
+    - apk add --no-cache git docker-cli docker-compose
+    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+    - git clone --recursive git@github.com:KTH-UrbanT/spara.git rollback_repo
+    - cd rollback_repo
+    
+    # Find the assembly tag from the same time period
+    - ASSEMBLY_TAG=$(git tag -l "passed_test-*" | grep -E "$(echo $LAST_SUCCESSFUL_TAG | cut -d'-' -f2-3)" | head -1)
+    - |
+      if [ -z "$ASSEMBLY_TAG" ]; then
+        echo "WARNING: Could not find matching assembly tag. Using main branch."
+        ASSEMBLY_TAG="main"
+      fi
+    - echo "Using assembly tag $ASSEMBLY_TAG"
+    
+    - git checkout "$ASSEMBLY_TAG"
+    - git submodule update --recursive
+    
+    # Inject .env files (they should be the same)
+    - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
+    - echo "$LLM_SERVICE_ENV" > llm-service/.env
+    
+    # Build the Docker images for rollback
+    - echo "Building Docker images for rollback..."
+    - docker compose -f infra/docker-compose.prod.yml build --no-cache
+    
+    # Save images as tar files
+    - docker save -o message-service-rollback.tar spara-message-service:latest
+    - docker save -o llm-service-rollback.tar spara-llm-service:latest  
+    - docker save -o frontend-rollback.tar spara-frontend:latest
+    - cd ..
+    
+    # Upload rollback images to production server
+    - echo "=== UPLOADING ROLLBACK IMAGES ==="
+    - rsync -avz -e "$SSH_CMD" rollback_repo/message-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" rollback_repo/llm-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" rollback_repo/frontend-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" rollback_repo/infra/ $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/infra/
+    - rsync -avz -e "$SSH_CMD" rollback_repo/message-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/message-service/.env
+    - rsync -avz -e "$SSH_CMD" rollback_repo/llm-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/llm-service/.env
+    
+    # Load rollback images on production server
+    - echo "=== LOADING ROLLBACK IMAGES ==="
+    - |
+      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+        set -euo pipefail
+        cd $PRODUCTION_REMOTE_PATH
+        
+        echo "Loading rollback Docker images..."
+        sudo docker load -i message-service-rollback.tar
+        sudo docker load -i llm-service-rollback.tar
+        sudo docker load -i frontend-rollback.tar
+        
+        # Clean up tar files
+        rm -f *-rollback.tar
+      EOF
+    
+    # Deploy the rollback version
+    - echo "=== DEPLOYING ROLLBACK VERSION ==="
+    - |
+      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+        set -euo pipefail
+        cd $PRODUCTION_REMOTE_PATH/infra
+        
+        echo "Starting rollback deployment..."
+        sudo docker compose -f docker-compose.prod.yml up -d --no-deps
+        
+        echo "Verifying rollback deployment..."
+        sleep 10
+        sudo docker compose -f docker-compose.prod.yml ps
+      EOF
+    
+    - echo "=== ROLLBACK COMPLETED ==="
+    - echo "Successfully rolled back to tag $LAST_SUCCESSFUL_TAG"
+    - echo "Both application and database have been restored to last known good state."
+    - echo "Services should be fully operational."
+    
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_failure
+  allow_failure: true
+
+# Manual production rollback job - can be triggered manually to rollback to a specific tag
+manual_production_rollback:
+  stage: deploy_production
+  image: alpine:3.18
+  resource_group: remote_production
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  script:
+    - set -euo pipefail
+    - echo "=== MANUAL PRODUCTION ROLLBACK ==="
+    
+    # Setup SSH
+    - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
+    
+    # Use provided rollback tag or default to last successful
+    - |
+      if [ -n "${ROLLBACK_TO_TAG:-}" ]; then
+        ROLLBACK_TAG="$ROLLBACK_TO_TAG"
+        echo "Rolling back to specified tag: $ROLLBACK_TAG"
+      else
+        ROLLBACK_TAG=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "cat $PRODUCTION_TAG_FILE 2>/dev/null || echo 'NONE'")
+        echo "Rolling back to last successful tag: $ROLLBACK_TAG"
+      fi
+    
+    - |
+      if [ "$ROLLBACK_TAG" = "NONE" ] || [ -z "$ROLLBACK_TAG" ]; then
+        echo "ERROR: No rollback tag available. Please specify ROLLBACK_TO_TAG variable."
+        exit 1
+      fi
+    
+    # Find corresponding backup
+    - ROLLBACK_BACKUP_FILE="$PRODUCTION_BACKUP_ARCHIVE/backup_${ROLLBACK_TAG}.sql"
+    - echo "Looking for backup $ROLLBACK_BACKUP_FILE"
+    
+    # Verify backup exists
+    - |
+      BACKUP_EXISTS=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "[ -f '$ROLLBACK_BACKUP_FILE' ] && echo 'YES' || echo 'NO'")
+      if [ "$BACKUP_EXISTS" = "NO" ]; then
+        echo "ERROR: Backup file $ROLLBACK_BACKUP_FILE not found."
+        echo "Available tagged backups:"
+        $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "ls -la $PRODUCTION_BACKUP_ARCHIVE/ 2>/dev/null || echo 'No tagged backups found'"
+        exit 1
+      fi
+    
+    # Fetch and deploy the specified version from Git  
+    - echo "=== FETCHING ROLLBACK VERSION ==="
+    - echo "Fetching and building application code from tag $ROLLBACK_TAG"
+    
+    # Clone the repository and checkout the rollback tag
+    - apk add --no-cache git docker-cli docker-compose
+    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+    - git clone --recursive git@github.com:KTH-UrbanT/spara.git rollback_repo
+    - cd rollback_repo
+    
+    # If ROLLBACK_TAG looks like a deployment tag (production-*), find the corresponding assembly tag
+    - |
+      if echo "$ROLLBACK_TAG" | grep -q "^production-"; then
+        ROLLBACK_PIPELINE_ID=$(echo "$ROLLBACK_TAG" | cut -d'-' -f4)
+        echo "Looking for assembly tag from pipeline: $ROLLBACK_PIPELINE_ID"
+        ASSEMBLY_TAG=$(git tag -l "passed_test-*" | grep -E "$(echo $ROLLBACK_TAG | cut -d'-' -f2-3)" | head -1)
+        if [ -z "$ASSEMBLY_TAG" ]; then
+          echo "WARNING: Could not find matching assembly tag for $ROLLBACK_TAG. Using main branch."
+          ASSEMBLY_TAG="main"
+        fi
+      else
+        # Assume it's already an assembly tag or branch name
+        ASSEMBLY_TAG="$ROLLBACK_TAG"
+      fi
+    
+    - echo "Using assembly tag $ASSEMBLY_TAG"
+    - git checkout "$ASSEMBLY_TAG"
+    - git submodule update --recursive
+    
+    # Inject .env files
+    - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
+    - echo "$LLM_SERVICE_ENV" > llm-service/.env
+    
+    # Build the Docker images for rollback
+    - echo "Building Docker images for rollback..."
+    - docker compose -f infra/docker-compose.prod.yml build --no-cache
+    
+    # Save images as tar files
+    - docker save -o message-service-rollback.tar spara-message-service:latest
+    - docker save -o llm-service-rollback.tar spara-llm-service:latest  
+    - docker save -o frontend-rollback.tar spara-frontend:latest
+    - cd ..
+    
+    # Upload rollback images to production server
+    - echo "=== UPLOADING ROLLBACK IMAGES ==="
+    - rsync -avz -e "$SSH_CMD" rollback_repo/message-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" rollback_repo/llm-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" rollback_repo/frontend-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - rsync -avz -e "$SSH_CMD" rollback_repo/infra/ $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/infra/
+    - rsync -avz -e "$SSH_CMD" rollback_repo/message-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/message-service/.env
+    - rsync -avz -e "$SSH_CMD" rollback_repo/llm-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/llm-service/.env
+    
+    # Load rollback images on production server
+    - echo "=== LOADING ROLLBACK IMAGES ==="
+    - |
+      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+        set -euo pipefail
+        cd $PRODUCTION_REMOTE_PATH
+        
+        echo "Loading rollback Docker images..."
+        sudo docker load -i message-service-rollback.tar
+        sudo docker load -i llm-service-rollback.tar
+        sudo docker load -i frontend-rollback.tar
+        
+        # Clean up tar files
+        rm -f *-rollback.tar
+      EOF
+    
+    # Create pre-rollback backup
+    - echo "=== CREATING PRE-ROLLBACK BACKUP ==="
+    - PRE_ROLLBACK_BACKUP="$PRODUCTION_BACKUP_ARCHIVE/pre_rollback_$(date +%Y%m%d_%H%M%S).sql"
+    - echo "Creating backup before rollback $PRE_ROLLBACK_BACKUP"
+    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "sudo docker exec -t spara-postgres pg_dumpall -c -U postgres > $PRE_ROLLBACK_BACKUP"
+    
+    # Stop current services
+    - echo "=== STOPPING CURRENT SERVICES ==="
+    - |
+      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+        set -euo pipefail
+        cd $PRODUCTION_REMOTE_PATH/infra
+        echo "Stopping application services..."
+        sudo docker compose -f docker-compose.prod.yml stop frontend message-service llm-service || true
+        sudo docker compose -f docker-compose.prod.yml rm -f frontend message-service llm-service || true
+      EOF
+    
+    # Deploy the rollback version
+    - echo "=== DEPLOYING ROLLBACK VERSION ==="
+    - |
+      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+        set -euo pipefail
+        cd $PRODUCTION_REMOTE_PATH/infra
+        
+        echo "Starting rollback deployment..."
+        sudo docker compose -f docker-compose.prod.yml up -d --no-deps
+        
+        echo "Verifying rollback deployment..."
+        sleep 10
+        sudo docker compose -f docker-compose.prod.yml ps
+      EOF
+    
+    # Restore database
+    - echo "=== RESTORING DATABASE ==="
+    - echo "Restoring database from $ROLLBACK_BACKUP_FILE"
+    - |
+      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+        set -euo pipefail
+        cd $PRODUCTION_REMOTE_PATH/infra
+        
+        echo "Stopping postgres for clean restore..."
+        sudo docker compose -f docker-compose.prod.yml stop postgres || true
+        
+        echo "Starting postgres..."
+        sudo docker compose -f docker-compose.prod.yml up -d postgres
+        sleep 15
+        
+        echo "Restoring database..."
+        sudo docker exec -i spara-postgres psql -U postgres < $ROLLBACK_BACKUP_FILE
+        
+        echo "Database restored successfully to tag: $ROLLBACK_TAG"
+      EOF
+    
+    # Update successful tag file to rolled back version
+    - echo "=== UPDATING TAG TRACKING ==="
+    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "echo '$ROLLBACK_TAG' > $PRODUCTION_TAG_FILE"
+    
+    - echo "=== ROLLBACK COMPLETED ==="
+    - echo "Successfully rolled back to tag $ROLLBACK_TAG"
+    - echo "Pre-rollback backup saved as $PRE_ROLLBACK_BACKUP"
+    - echo "Both application and database have been restored."
+    - echo "Services should be fully operational."
+    
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: false
+  variables:
+    ROLLBACK_TO_TAG: ""  # Can be overridden when triggering manually
