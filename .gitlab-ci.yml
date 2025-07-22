@@ -1,8 +1,19 @@
+#  ▗▄▄▖▗▄▄▄▖▗▄▄▄▖▗▖    ▗▄▖ ▗▄▄▖ 
+# ▐▌     █    █  ▐▌   ▐▌ ▐▌▐▌ ▐▌
+# ▐▌▝▜▌  █    █  ▐▌   ▐▛▀▜▌▐▛▀▚▖
+# ▝▚▄▞▘▗▄█▄▖  █  ▐▙▄▄▖▐▌ ▐▌▐▙▄▞▘
+#
 # Assembly Pipeline
 #
-# Note that no cleanup of the docker images run on GitLab
-# is needed, since the GitLab runners starts with a fresh
-# Docker image for each job.
+# This file contains the full pipeline for the assembly process.
+# This includes:
+# - Preparing the environments
+# - Building Docker images
+# - Testing 
+# - Deploying to staging
+# - Deploying to production
+# - Cleanup
+#
 
 stages:
   - prepare
@@ -141,7 +152,7 @@ before_script:
   - git config --global user.email "ci@sparabot.com"
   - git config --global user.name "CI Bot"
 
-# Prepare the environment
+# Prepare The Environment
 #
 # Here we load the submodules as given, from GitHub (using SSH_GITHUB_PRIVATE_KEY).
 # We do this since GitHub allways has the latest versions, and pulling from
@@ -189,7 +200,7 @@ prepare_environment:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Build images
+# Build Images
 #
 # Here we build the Docker images for the services, using the Docker Compose file,
 # and save them as tar files for later use (to speed up deployment). The tar-files
@@ -226,7 +237,7 @@ build_images:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Test all services
+# Test All Services
 #
 # Tests all services in dependency order:
 # message-service and llm-service first (both depend on redis),
@@ -274,7 +285,7 @@ test_all_services:
     
     # Generate tag names for later use in tagging job
     - touch combined_tags.env
-    
+
     - MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
@@ -288,9 +299,11 @@ test_all_services:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Combined remote operations - cleanup, sync, deploy, and validate
-# This job holds the remote_staging resource lock from beginning to end
-# Only runs after tests pass successfully on GitLab servers
+# Deploy And Validate Remote Staging
+#
+# Combined remote operations - cleanup, sync, deploy, and validate.
+# This job holds the remote_staging resource lock from beginning to end.
+# Only runs after tests pass successfully on GitLab servers.
 deploy_and_validate_remote_staging:
   needs:
     - build_images
@@ -301,6 +314,8 @@ deploy_and_validate_remote_staging:
   resource_group: remote_staging
   interruptible: false  # Don't interrupt deployment once started
   script:
+
+    # Set strict error handling
     - set -euo pipefail
     
     # Step 1: Cleanup (from cleanup_remote)
@@ -316,39 +331,52 @@ deploy_and_validate_remote_staging:
     # Get current assembly tag for backup naming
     - CURRENT_ASSEMBLY_TAG="staging-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - echo "Using assembly tag $CURRENT_ASSEMBLY_TAG"
-    
-    # Create backup with tag-based name
+
+    # Create backup with tag-based name (fixed redirect issue)
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $STAGING_BACKUP_ARCHIVE"
     - BACKUP_FILE="$STAGING_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
-    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "sudo docker exec -t spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE"
-    
+    - |
+      $SSH_CMD $STAGING_USERNAME@$STAGING_HOST <<EOF
+        set -euo pipefail
+        echo "Creating backup: $BACKUP_FILE"
+        sudo docker exec -t spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE
+        echo "Backup created successfully"
+        ls -la $BACKUP_FILE
+      EOF
+
     # Keep only the 10 most recent tagged backups
     - echo "Pruning old tagged Postgres backups, keeping only the 10 most recent..."
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "ls -1t $STAGING_BACKUP_ARCHIVE/backup_*.sql | tail -n +11 | xargs -r rm --"
 
-    # Step 3: Sync (from sync_staging)
+    # Step 3: Sync files to staging server using rsync
     - echo "=== SYNC PHASE ==="
     - echo "Preparing and syncing files to staging server"
+
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "sudo rm -rf $STAGING_REMOTE_PATH/*"
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $(dirname $STAGING_REMOTE_PATH)"
+
     - rsync -avz -e "$SSH_CMD" infra/ $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/infra
+
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $STAGING_REMOTE_PATH/message-service $STAGING_REMOTE_PATH/llm-service $STAGING_REMOTE_PATH/frontend"
+
     - rsync -avz -e "$SSH_CMD" message-service/.env $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/message-service/.env
     - rsync -avz -e "$SSH_CMD" llm-service/.env $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/llm-service/.env
     - rsync -avz -e "$SSH_CMD" message-service.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
     - rsync -avz -e "$SSH_CMD" llm-service.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
     - rsync -avz -e "$SSH_CMD" frontend.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
 
-    # Step 4: Deploy (from deploy_test_env_staging)
+    # Step 4: Deploy on Staging Server
     - echo "=== DEPLOY PHASE ==="
     - echo "Deploying to staging server"
+
+    # Reused logic to check and install Docker if needed
     - |
-      DOCKER_STATUS=$(ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
+      DOCKER_STATUS=$($SSH_CMD $STAGING_USERNAME@$STAGING_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
       echo "Docker status: $DOCKER_STATUS"
       
       if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
         echo "Installing Docker..."
-        ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST <<'EOF'
+        $SSH_CMD $STAGING_USERNAME@$STAGING_HOST <<'EOF'
           set -euo pipefail
           echo "Installing Docker and docker compose plugin..."
           sudo apt update
@@ -363,12 +391,14 @@ deploy_and_validate_remote_staging:
       else
         echo "Docker already installed, skipping installation"
       fi
-    
-    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST 'docker compose version'
-    
+
+    # Check Docker and Docker Compose versions (important after installation)
+    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST 'docker compose version'
+
+    # Load Docker images on the staging server
     - echo "Loading Docker images..."
     - |
-      ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST <<EOF
+      $SSH_CMD $STAGING_USERNAME@$STAGING_HOST <<EOF
         set -euo pipefail
         cd $STAGING_REMOTE_PATH
         sudo docker load -i message-service.tar
@@ -376,19 +406,22 @@ deploy_and_validate_remote_staging:
         sudo docker load -i frontend.tar
       EOF
     
+    # Start the services using Docker Compose
+    # Here we use a retry logic to ensure the services start correctly,
+    # noice how we use a sleep between attempts.
     - echo "Starting deployment with retry logic..."
     - |
       for attempt in 1 2 3; do
         echo "Deployment attempt $attempt..."
-        
-        if ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
+
+        if $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
           echo "Services started successfully on attempt $attempt"
           break
         else
           echo "Attempt $attempt failed"
           if [ $attempt -lt 3 ]; then
             echo "Cleaning up and waiting 30 seconds before retry..."
-            ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
+            $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
             sleep 30
           else
             echo "All deployment attempts failed"
@@ -397,17 +430,20 @@ deploy_and_validate_remote_staging:
         fi
       done
     
+    # We wait a few seconds and then verify the deployment
     - echo "Verifying deployment..."
     - sleep 10
-    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
+    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
 
-    # Step 5: Validate (from validate_deployment)
+    # Step 5: Validate Deployment
+    # We validate the deployment trough a curl request,
+    # and if we don't get a response, we retry up to 30 times.
     - echo "=== VALIDATION PHASE ==="
     - apk add --no-cache curl
     - |
       echo "Validating deployment..."
       for i in {1..30}; do
-        if curl -f -s https://test.sparabot.com/health > /dev/null; then
+        if curl -f -s https://test.sparabot.com/ > /dev/null; then
           echo "Deployment validated successfully"
           break
         fi
@@ -419,12 +455,8 @@ deploy_and_validate_remote_staging:
         fi
       done
 
-    # Step 6: Cleanup tar files (from cleanup_tar_files)
-    - echo "=== CLEANUP TAR FILES ==="
-    - echo "Cleaning up tar files on staging server"
-    - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST "rm -f $STAGING_REMOTE_PATH/*.tar"
-    
-    # Step 7: Record successful deployment tag
+    # Step 6: Record successful deployment tag
+    # For rollbacks, we record the current assembly tag.
     - echo "=== RECORD SUCCESSFUL TAG ==="
     - echo "Recording successful deployment tag $CURRENT_ASSEMBLY_TAG"
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "echo '$CURRENT_ASSEMBLY_TAG' > $STAGING_TAG_FILE"
@@ -433,7 +465,9 @@ deploy_and_validate_remote_staging:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Tag the submodules and the assembly repo after successful tests,
+# Tag And Merge
+#
+# Tag the submodules and the assembly repo. after successful tests,
 # and merge the changes back to the main branch of each submodule.
 tag_and_merge:
   stage: finish_staging
@@ -441,28 +475,32 @@ tag_and_merge:
   interruptible: false  # Don't interrupt tagging once started
   needs:
     - deploy_and_validate_remote_staging
-    - test_all_services  # To get the tag names from dotenv
-    - prepare_environment # To get submodule SHAs
+    - test_all_services                     # To get the tag names from dotenv
+    - prepare_environment                   # To get submodule SHAs
   script:
+    # Set strict error handling
     - set -euo pipefail
 
     - echo "Tested submodule tags $MESSAGE_SERVICE_TAG, $LLM_SERVICE_TAG, $FRONTEND_TAG"
     
     # Fresh clone for tagging (full depth needed for git operations)
+    # Note that we clone into another directory to avoid conflicts,
+    # as we allready have the repository in the current directory.
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
     - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git tagging_repo
     - cd tagging_repo
     
-    # Tag each submodule at locked SHA
+    # Tag each submodule at locked SHA, and merge to main.
+    # We use the SHAs from the submodule_shas.txt file,
     - echo "Reading submodule SHAs from submodule_shas.txt..."
     - cp ../submodule_shas.txt .
-
     - |
       for name in message-service llm-service frontend; do
         SHA=$(grep "$name" submodule_shas.txt | awk '{print $1}')
         TAG_VAR_NAME=$(echo "$name" | tr 'a-z-' 'A-Z_' )_TAG
         TAG_VALUE=$(eval echo \$$TAG_VAR_NAME)
 
+        # Tag the submodule at the specified SHA
         echo "Tagging $name at SHA $SHA with tag $TAG_VALUE"
         cd "$name"
         git fetch origin
@@ -478,13 +516,13 @@ tag_and_merge:
         cd ..
       done
 
-    # Tag the assembly repo (optionally include SHAs in tag message)
+    # Tag the assembly repo and push it.
     - ASSEMBLY_TAG="passed_test-$(date +%Y%m%d-%H%M%S)"
     - echo "Creating assembly release tag $ASSEMBLY_TAG"
-    - git tag -a "$ASSEMBLY_TAG" -m "Assembly release with tested SHAs $(cat submodule_shas.txt | xargs)"
+    - git tag -a "$ASSEMBLY_TAG" -m "Assembly release"
     - git push origin "$ASSEMBLY_TAG"
 
-    # Export the assembly tag for the manual merge job
+    # Export the assembly tag for the manual merge job (manual trigger).
     - echo "ASSEMBLY_TAG=$ASSEMBLY_TAG" > assembly_tag.env
 
   artifacts:
@@ -493,11 +531,16 @@ tag_and_merge:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Cleanup job that runs only on pipeline failure
+# Cleanup On Failure
+#
+# Cleanup job that runs only on pipeline failure. We do this to
+# ensure that the staging server is cleaned up even if the
+# deployment fails (quicker run next time).
 cleanup_on_failure:
   stage: finish_staging
   image: alpine:3.18
   resource_group: remote_staging
+  interruptible: false  # Don't interrupt cleanup once started
   script: 
     - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
     - *cleanup_staging_script
@@ -506,8 +549,11 @@ cleanup_on_failure:
       when: on_failure
   allow_failure: true
 
-# Manually triggered job to merge the assembly repo to main
+# Merge Assembly To Main
+#
+# Manually triggered job to merge the assembly repo to main.
 # This job must be manually triggered after successful tagging
+# due to its high impact on the project.
 merge_assembly_to_main:
   stage: deploy_production
   image: alpine:3.18
@@ -515,16 +561,20 @@ merge_assembly_to_main:
   needs:
     - tag_and_merge  # To get the assembly tag
   script:
+
+    # Set strict error handling
     - set -euo pipefail
 
     - echo "Merging assembly tag $ASSEMBLY_TAG to main branch"
     
     # Fresh clone for merging (full depth needed for git operations)
+    # Note that we clone into another directory to avoid conflicts,
+    # despite not having imported any artifacts through the use of "needs".
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
     - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git merge_repo
     - cd merge_repo
     
-    # Merge the assembly repo's current state/tag to main
+    # Merge the assembly repo's current state/tag to main and push it.
     - git checkout main
     - git merge --no-ff "$ASSEMBLY_TAG" -m "Merge assembly release $ASSEMBLY_TAG to main"
     - git push origin main
@@ -536,9 +586,15 @@ merge_assembly_to_main:
       when: manual
       allow_failure: false
 
+# Deploy And Validate Remote Production
+#
 # On commit to main branch, we clean the production deployment server,
 # similar to how we do it for the test branch. Clone and then
 # deploy to production.
+#
+# Note that this job can trigger on hot-fixes and unfortionately
+# also on merges to main, so we need to be careful
+# (highlighting importance of well informed developers).
 deploy_and_validate_remote_production:
   needs:
     - build_images
@@ -550,6 +606,8 @@ deploy_and_validate_remote_production:
   resource_group: remote_production
   interruptible: false  # Don't interrupt deployment once started
   script:
+
+    # Set strict error handling
     - set -euo pipefail
     
     # Step 1: Production Cleanup (using production-specific cleanup script)
@@ -566,10 +624,17 @@ deploy_and_validate_remote_production:
     - CURRENT_ASSEMBLY_TAG="production-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - echo "Using assembly tag $CURRENT_ASSEMBLY_TAG"
     
-    # Create backup archive directory and backup with tag-based name
+    # Create backup archive directory and backup with tag-based name (fixed redirect)
     - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "mkdir -p $PRODUCTION_BACKUP_ARCHIVE"
     - BACKUP_FILE="$PRODUCTION_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
-    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "sudo docker exec -t spara-postgres pg_dumpall -c -U postgres > $BACKUP_FILE"
+    - |
+      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+        set -euo pipefail
+        echo "Creating production backup: $BACKUP_FILE"
+        sudo docker exec -t spara-postgres pg_dumpall -c -U postgres > $BACKUP_FILE
+        echo "Production backup created successfully"
+        ls -la $BACKUP_FILE
+      EOF
     
     # Keep only the 10 most recent tagged backups
     - echo "Pruning old tagged Postgres backups, keeping only the 10 most recent..."
@@ -668,12 +733,7 @@ deploy_and_validate_remote_production:
         fi
       done
 
-    # Step 6: Cleanup tar files from production server
-    - echo "=== CLEANUP PRODUCTION TAR FILES ==="
-    - echo "Cleaning up tar files on production server"
-    - ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST "rm -f $PRODUCTION_REMOTE_PATH/*.tar"
-    
-    # Step 7: Record successful production deployment tag
+    # Step 6: Record successful production deployment tag
     - echo "=== RECORD SUCCESSFUL PRODUCTION TAG ==="
     - echo "Recording successful production deployment tag $CURRENT_ASSEMBLY_TAG"
     - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "echo '$CURRENT_ASSEMBLY_TAG' > $PRODUCTION_TAG_FILE"
