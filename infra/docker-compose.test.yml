@@ -38,7 +38,7 @@ services:
     image: flyway/flyway:9-alpine
     container_name: spara-flyway
     networks:
-      - spara_network
+      - spara_test_network
     depends_on:
       - message_store
     environment:
