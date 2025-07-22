@@ -4,13 +4,6 @@
 # is needed, since the GitLab runners starts with a fresh
 # Docker image for each job.
 
-# Add to docker compose prod.
-volumes:
-  message_store_data:
-    external: true  # volume must pre‑exist; Compose will never delete it
-  redis_data:
-    external: true  # volume must pre‑exist; Compose will never delete it
-
 stages:
   - prepare
   - test
@@ -33,7 +26,12 @@ variables:
   PRODUCTION_PASSWORD:        $SSH_PRODUCTION_PASSWORD
   PRODUCTION_REMOTE_PATH:     $SSH_PRODUCTION_REMOTE_PATH
 
-  SSH_GITHUB_PRIVATE_KEY: $SSH_GITHUB_KEY
+  SSH_GITHUB_PRIVATE_KEY:     $SSH_GITHUB_KEY
+
+  STAGING_POSTGRES_BACKUP_FOLDER:       /home/ubuntu/spara/cicd_backups/postgres
+  PRODUCTION_POSTGRES_BACKUP_FOLDER:    /srv/odenlabs/spara/cicd_backups/postgres
+
+
   # Instead of using the repository from GitLab,
   # we get a fresh copy from GitHub. This reduces
   # the requirements on the GitLab and was partially
@@ -311,7 +309,16 @@ deploy_and_validate_remote_staging:
     - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
     - *cleanup_production_script
 
-    # Step 2: Sync (from sync_staging)
+    # Step 2: Backup Postgres (from backup_postgres)
+    - echo "=== BACKUP PHASE ==="
+    - echo "Backing up Postgres database"
+    - BACKUP_FILE="$STAGING_POSTGRES_BACKUP_FOLDER/backup_$(date +%Y%m%d_%H%M%S).sql"
+    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "sudo docker exec -t spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE"
+    # Keep only the 10 most recent backups, delete older ones
+    - echo "Pruning old Postgres backups, keeping only the 10 most recent..."
+    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "ls -1t $STAGING_POSTGRES_BACKUP_FOLDER/backup_*.sql | tail -n +11 | xargs -r rm --"
+
+    # Step 3: Sync (from sync_staging)
     - echo "=== SYNC PHASE ==="
     - echo "Preparing and syncing files to staging server"
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "sudo rm -rf $STAGING_REMOTE_PATH/*"
@@ -324,7 +331,7 @@ deploy_and_validate_remote_staging:
     - rsync -avz -e "$SSH_CMD" llm-service.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
     - rsync -avz -e "$SSH_CMD" frontend.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
 
-    # Step 3: Deploy (from deploy_test_env_staging)
+    # Step 4: Deploy (from deploy_test_env_staging)
     - echo "=== DEPLOY PHASE ==="
     - echo "Deploying to staging server"
     - |
@@ -386,7 +393,7 @@ deploy_and_validate_remote_staging:
     - sleep 10
     - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
 
-    # Step 4: Validate (from validate_deployment)
+    # Step 5: Validate (from validate_deployment)
     - echo "=== VALIDATION PHASE ==="
     - apk add --no-cache curl
     - |
@@ -404,7 +411,7 @@ deploy_and_validate_remote_staging:
         fi
       done
 
-    # Step 5: Cleanup tar files (from cleanup_tar_files)
+    # Step 6: Cleanup tar files (from cleanup_tar_files)
     - echo "=== CLEANUP TAR FILES ==="
     - echo "Cleaning up tar files on staging server"
     - ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no $STAGING_USERNAME@$STAGING_HOST "rm -f $STAGING_REMOTE_PATH/*.tar"
@@ -529,7 +536,6 @@ deploy_and_validate_remote_production:
   resource_group: remote_production
   interruptible: false  # Don't interrupt deployment once started
   script:
-    - exit
     - set -euo pipefail
     
     # Step 1: Production Cleanup (using production-specific cleanup script)
@@ -538,7 +544,16 @@ deploy_and_validate_remote_production:
     - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
     - *cleanup_production_script
 
-    # Step 2: Sync (adapted for production)
+    # Step 2: Backup Postgres (from backup_postgres)
+    - echo "=== BACKUP PHASE ==="
+    - echo "Backing up Postgres database"
+    - BACKUP_FILE="$PRODUCTION_POSTGRES_BACKUP_FOLDER/backup_$(date +%Y%m%d_%H%M%S).sql"
+    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "sudo docker exec -t spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE"
+    # Keep only the 10 most recent backups, delete older ones
+    - echo "Pruning old Postgres backups, keeping only the 10 most recent..."
+    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "ls -1t $PRODUCTION_POSTGRES_BACKUP_FOLDER/backup_*.sql | tail -n +11 | xargs -r rm --"
+
+    # Step 3: Sync (adapted for production)
     - echo "=== PRODUCTION SYNC PHASE ==="
     - echo "Preparing and syncing files to production server"
     - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "sudo rm -rf $PRODUCTION_REMOTE_PATH/frontend $PRODUCTION_REMOTE_PATH/message-service $PRODUCTION_REMOTE_PATH/llm-service"
@@ -551,7 +566,7 @@ deploy_and_validate_remote_production:
     - rsync -avz -e "$SSH_CMD" llm-service.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
     - rsync -avz -e "$SSH_CMD" frontend.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
 
-    # Step 3: Deploy to production
+    # Step 4: Deploy to production
     - echo "=== PRODUCTION DEPLOY PHASE ==="
     - echo "Deploying to production server"
     - |
@@ -613,7 +628,7 @@ deploy_and_validate_remote_production:
     - sleep 15
     - ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST "cd $PRODUCTION_REMOTE_PATH/infra && sudo docker compose -f docker-compose.prod.yml ps"
 
-    # Step 4: Validate production deployment
+    # Step 5: Validate production deployment
     - echo "=== PRODUCTION VALIDATION PHASE ==="
     - apk add --no-cache curl
     - |
@@ -631,7 +646,7 @@ deploy_and_validate_remote_production:
         fi
       done
 
-    # Step 5: Cleanup tar files from production server
+    # Step 6: Cleanup tar files from production server
     - echo "=== CLEANUP PRODUCTION TAR FILES ==="
     - echo "Cleaning up tar files on production server"
     - ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST "rm -f $PRODUCTION_REMOTE_PATH/*.tar"
