@@ -321,7 +321,7 @@ deploy_and_validate_remote_staging:
     # Step 1: Cleanup (from cleanup_remote)
     - echo "=== CLEANUP PHASE ==="
     - echo "Cleaning up staging server before deployment"
-    - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
+    - export SSH_CMD="ssh -tt -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no" # Added -tt that forces a PTY allocation even when stdin isn't a terminal
     - *cleanup_staging_script
 
     # Step 2: Backup Postgres (from backup_postgres)
