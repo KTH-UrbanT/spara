@@ -44,10 +44,10 @@ variables:
   SSH_GITHUB_PRIVATE_KEY:     $SSH_GITHUB_KEY
   
   # Tag tracking files for rollback capability
-  STAGING_TAG_FILE:                      /home/ubuntu/spara/last_successful_tag.txt
-  PRODUCTION_TAG_FILE:                   /srv/odenlabs/spara/last_successful_tag.txt
-  STAGING_BACKUP_ARCHIVE:                /home/ubuntu/spara/cicd_backups/tagged_backups
-  PRODUCTION_BACKUP_ARCHIVE:             /srv/odenlabs/spara/cicd_backups/tagged_backups
+  STAGING_TAG_FILE:                      /home/ubuntu/last_successful_tag.txt
+  PRODUCTION_TAG_FILE:                   /srv/odenlabs/last_successful_tag.txt
+  STAGING_BACKUP_ARCHIVE:                /home/ubuntu/cicd_backups/tagged_backups
+  PRODUCTION_BACKUP_ARCHIVE:             /srv/odenlabs/cicd_backups/tagged_backups
 
   # Instead of using the repository from GitLab,
   # we get a fresh copy from GitHub. This reduces
@@ -344,9 +344,8 @@ deploy_and_validate_remote_staging:
         echo "Creating backup directory $STAGING_BACKUP_ARCHIVE"
         mkdir -p $STAGING_BACKUP_ARCHIVE
         echo "Creating backup $BACKUP_FILE"
-        if sudo docker exec -i spara-postgres-test pg_dumpall -c -U postgres > "$BACKUP_FILE" 2>&1; then
+        if sudo docker exec -i spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE 2>&1; then
           echo "Backup created successfully"
-          cat "$BACKUP_FILE"
         else
           echo "Backup failed, contents of backup file:"
           cat "$BACKUP_FILE"
