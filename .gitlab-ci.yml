@@ -1,6 +1,6 @@
-#  ▗▄▄▖▗▄▄▄▖▗▄▄▄▖▗▖    ▗▄▖ ▗▄▄▖ 
-# ▐▌     █    █  ▐▌   ▐▌ ▐▌▐▌ ▐▌
-# ▐▌▝▜▌  █    █  ▐▌   ▐▛▀▜▌▐▛▀▚▖
+#  ▗▄▄▖ ▗▄▄▄▖▗▄▄▄▖▗▖    ▗▄▖ ▗▄▄▖ 
+# ▐▌         █    █  ▐▌   ▐▌ ▐▌▐▌ ▐▌
+# ▐▌▝▜▌    █     █  ▐▌   ▐▛▀▜▌▐▛▀▚▖
 # ▝▚▄▞▘▗▄█▄▖  █  ▐▙▄▄▖▐▌ ▐▌▐▙▄▞▘
 #
 # Assembly Pipeline
@@ -334,6 +334,7 @@ deploy_and_validate_remote_staging:
 
     # Create backup with tag-based name (fixed redirect issue)
     - BACKUP_FILE="$STAGING_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
+    - echo "Creating backup file $BACKUP_FILE"
     - |
       $SSH_CMD $STAGING_USERNAME@$STAGING_HOST <<EOF
         set -euo pipefail
