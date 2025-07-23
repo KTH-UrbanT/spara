@@ -15,6 +15,9 @@
 # - Testing 
 # - Deploying to staging
 # - Deploying to production
+# - Keeping track of successful deployments
+# - Tagging submodules and assembly repo
+# - Rollbacks for production
 # - Cleanup
 #
 
@@ -122,6 +125,145 @@ variables:
   - CLEANUP_REMOTE_PATH="$PRODUCTION_REMOTE_PATH" 
   - CLEANUP_COMPOSE_FILE="$COMPOSE_FILE_PROD"
   - *cleanup_script
+
+# YAML anchor for Docker installation check pattern
+.docker_install_check_template: &docker_install_check
+  - |
+    DOCKER_STATUS=$($SSH_CMD $TARGET_USERNAME@$TARGET_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
+    echo "Docker status: $DOCKER_STATUS"
+    
+    if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
+      echo "Installing Docker..."
+      $SSH_CMD $TARGET_USERNAME@$TARGET_HOST <<'EOF'
+        set -euo pipefail
+        echo "Installing Docker and docker compose plugin..."
+        sudo apt update
+        sudo apt install -y ca-certificates curl gnupg lsb-release
+        sudo install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        sudo chmod a+r /etc/apt/keyrings/docker.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+        sudo apt update
+        sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    EOF
+    else
+      echo "Docker already installed, skipping installation"
+    fi
+    
+    # Check Docker and Docker Compose versions
+    $SSH_CMD $TARGET_USERNAME@$TARGET_HOST 'docker compose version'
+
+# YAML anchor for file copy pattern
+.copy_files_template: &copy_files
+  - echo "Copying files to remote server (clean deployment)"
+  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "find $TARGET_REMOTE_PATH -mindepth 1 -maxdepth 1 ! -name cicd -exec sudo rm -rf {} +"
+  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "mkdir -p $(dirname $TARGET_REMOTE_PATH)"
+  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "mkdir -p $TARGET_REMOTE_PATH/message-service $TARGET_REMOTE_PATH/llm-service $TARGET_REMOTE_PATH/frontend"
+  
+  # Copy directories and files directly using scp (SOURCE_PATH allows flexibility for rollback scenarios)
+  - scp -i $SSH_KEY_PATH -r ${SOURCE_PATH:-}infra/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/
+  - scp -i $SSH_KEY_PATH ${SOURCE_PATH:-}message-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service/.env
+  - scp -i $SSH_KEY_PATH ${SOURCE_PATH:-}llm-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service/.env
+  - scp -i $SSH_KEY_PATH ${SOURCE_PATH:-}message-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/
+  - scp -i $SSH_KEY_PATH ${SOURCE_PATH:-}llm-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/
+  - scp -i $SSH_KEY_PATH ${SOURCE_PATH:-}frontend.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/
+
+# YAML anchor for backup pattern
+.backup_postgres_template: &backup_postgres
+  - echo "=== BACKUP PHASE ==="
+  - echo "Backing up Postgres database with tag-based naming"
+  
+  # Get current assembly tag for backup naming
+  - CURRENT_ASSEMBLY_TAG="$ENVIRONMENT-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+  - echo "Using assembly tag $CURRENT_ASSEMBLY_TAG"
+
+  # Create backup with tag-based name
+  - BACKUP_FILE="$TARGET_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
+  - echo "Creating backup file $BACKUP_FILE"
+  - |
+    $SSH_CMD $TARGET_USERNAME@$TARGET_HOST <<EOF
+      set -euo pipefail
+      echo "Creating backup directory $TARGET_BACKUP_ARCHIVE"
+      mkdir -p $TARGET_BACKUP_ARCHIVE
+      echo "Creating backup $BACKUP_FILE"
+      if sudo docker exec -i $POSTGRES_CONTAINER pg_dumpall -c -U postgres > $BACKUP_FILE 2>&1; then
+        echo "Backup created successfully"
+      else
+        echo "Backup failed, contents of backup file:"
+        cat "$BACKUP_FILE"
+        exit 1
+      fi
+      ls -la "$BACKUP_FILE"
+    EOF
+
+  # Keep only the 10 most recent tagged backups
+  - echo "Pruning old tagged Postgres backups, keeping only the 10 most recent..."
+  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "ls -1t $TARGET_BACKUP_ARCHIVE/backup_*.sql | tail -n +11 | xargs -r rm --"
+
+# YAML anchor for loading Docker images
+.load_images_template: &load_images
+  - echo "Loading Docker images..."
+  - |
+    $SSH_CMD $TARGET_USERNAME@$TARGET_HOST <<EOF
+      set -euo pipefail
+      cd $TARGET_REMOTE_PATH
+      sudo docker load -i message-service.tar
+      sudo docker load -i llm-service.tar
+      sudo docker load -i frontend.tar
+    EOF
+
+# YAML anchor for deploy with retry pattern
+.deploy_with_retry_template: &deploy_with_retry
+  - echo "Starting deployment with retry logic..."
+  - |
+    for attempt in 1 2 3; do
+      echo "Deployment attempt $attempt..."
+
+      if $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE up -d --no-deps"; then
+        echo "Services started successfully on attempt $attempt"
+        break
+      else
+        echo "Attempt $attempt failed"
+        if [ $attempt -lt 3 ]; then
+          echo "Cleaning up and waiting 30 seconds before retry..."
+          $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE down || true" || true
+          sleep 30
+        else
+          echo "All deployment attempts failed"
+          exit 1
+        fi
+      fi
+    done
+
+# YAML anchor for validation pattern
+.validate_deployment_template: &validate_deployment
+  - echo "=== VALIDATION PHASE ==="
+  - apk add --no-cache curl
+  - |
+    echo "Validating deployment..."
+    for i in {1..30}; do
+      if curl -f -s $VALIDATION_URL > /dev/null; then
+        echo "Deployment validated successfully"
+        break
+      fi
+      echo "Attempt $i: Service not ready, waiting..."
+      sleep 10
+      if [ $i -eq 30 ]; then
+        echo "Deployment validation failed"
+        exit 1
+      fi
+    done
+
+# YAML anchor for recording success pattern
+.record_success_template: &record_success
+  - echo "=== RECORD SUCCESSFUL TAG ==="
+  - echo "Recording successful deployment tag $CURRENT_ASSEMBLY_TAG"
+  - |
+    $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "\
+      touch $TARGET_TAG_FILE && \
+      (tail -n 9 $TARGET_TAG_FILE 2>/dev/null; echo '$CURRENT_ASSEMBLY_TAG') > $TARGET_TAG_FILE.tmp && \
+      mv $TARGET_TAG_FILE.tmp $TARGET_TAG_FILE"
+  - echo "Deployment completed successfully with tag $CURRENT_ASSEMBLY_TAG"
 
 # The 'container_setup' job initializes the Git repository, installs necessary dependencies,
 # and prepares the environment for testing and deployment.
@@ -328,153 +470,42 @@ deploy_and_validate_remote_staging:
     - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
     - *cleanup_staging_script
 
-    # Step 2: Backup Postgres (from backup_postgres)
-    - echo "=== BACKUP PHASE ==="
-    - echo "Backing up Postgres database with tag-based naming"
-    
-    # Get current assembly tag for backup naming
-    - CURRENT_ASSEMBLY_TAG="staging-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "Using assembly tag $CURRENT_ASSEMBLY_TAG"
+    # Step 2: Backup Postgres
+    - TARGET_USERNAME="$STAGING_USERNAME"
+    - TARGET_HOST="$STAGING_HOST"
+    - TARGET_BACKUP_ARCHIVE="$STAGING_BACKUP_ARCHIVE"
+    - TARGET_REMOTE_PATH="$STAGING_REMOTE_PATH"
+    - ENVIRONMENT="staging"
+    - POSTGRES_CONTAINER="spara-postgres-test"
+    - *backup_postgres
 
-    # Create backup with tag-based name (fixed redirect issue)
-    - BACKUP_FILE="$STAGING_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
-    - echo "Creating backup file $BACKUP_FILE"
-    - |
-      $SSH_CMD $STAGING_USERNAME@$STAGING_HOST <<EOF
-        set -euo pipefail
-        echo "Creating backup directory $STAGING_BACKUP_ARCHIVE"
-        mkdir -p $STAGING_BACKUP_ARCHIVE
-        echo "Creating backup $BACKUP_FILE"
-        if sudo docker exec -i spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE 2>&1; then
-          echo "Backup created successfully"
-        else
-          echo "Backup failed, contents of backup file:"
-          cat "$BACKUP_FILE"
-          exit 1
-        fi
-        ls -la "$BACKUP_FILE"
-      EOF
-
-    # Keep only the 10 most recent tagged backups
-    - echo "Pruning old tagged Postgres backups, keeping only the 10 most recent..."
-    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "ls -1t $STAGING_BACKUP_ARCHIVE/backup_*.sql | tail -n +11 | xargs -r rm --"
-
-    # Step 3: Copy files to staging server using scp
+    # Step 3: Copy files to staging server
     - echo "=== SYNC PHASE ==="
-    - echo "Copying files to staging server (clean deployment)"
-
-    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "find $STAGING_REMOTE_PATH -mindepth 1 -maxdepth 1 ! -name cicd -exec sudo rm -rf {} +"
-    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $(dirname $STAGING_REMOTE_PATH)"
-    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $STAGING_REMOTE_PATH/message-service $STAGING_REMOTE_PATH/llm-service $STAGING_REMOTE_PATH/frontend"
-
-    # Copy directories and files directly using scp
-    - scp -i ~/.ssh/staging_remote_key -r infra/ $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
-    - scp -i ~/.ssh/staging_remote_key message-service/.env $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/message-service/.env
-    - scp -i ~/.ssh/staging_remote_key llm-service/.env $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/llm-service/.env
-    - scp -i ~/.ssh/staging_remote_key message-service.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
-    - scp -i ~/.ssh/staging_remote_key llm-service.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
-    - scp -i ~/.ssh/staging_remote_key frontend.tar $STAGING_USERNAME@$STAGING_HOST:$STAGING_REMOTE_PATH/
+    - SSH_KEY_PATH="~/.ssh/staging_remote_key"
+    - *copy_files
 
     # Step 4: Deploy on Staging Server
     - echo "=== DEPLOY PHASE ==="
     - echo "Deploying to staging server"
-
-    # Reused logic to check and install Docker if needed
-    - |
-      DOCKER_STATUS=$($SSH_CMD $STAGING_USERNAME@$STAGING_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
-      echo "Docker status: $DOCKER_STATUS"
-      
-      if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
-        echo "Installing Docker..."
-        $SSH_CMD $STAGING_USERNAME@$STAGING_HOST <<'EOF'
-          set -euo pipefail
-          echo "Installing Docker and docker compose plugin..."
-          sudo apt update
-          sudo apt install -y ca-certificates curl gnupg lsb-release
-          sudo install -m 0755 -d /etc/apt/keyrings
-          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-          sudo chmod a+r /etc/apt/keyrings/docker.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-          sudo apt update
-          sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-      EOF
-      else
-        echo "Docker already installed, skipping installation"
-      fi
-
-    # Check Docker and Docker Compose versions (important after installation)
-    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST 'docker compose version'
-
-    # Load Docker images on the staging server
-    - echo "Loading Docker images..."
-    - |
-      $SSH_CMD $STAGING_USERNAME@$STAGING_HOST <<EOF
-        set -euo pipefail
-        cd $STAGING_REMOTE_PATH
-        sudo docker load -i message-service.tar
-        sudo docker load -i llm-service.tar
-        sudo docker load -i frontend.tar
-      EOF
+    - *docker_install_check
+    - *load_images
     
-    # Start the services using Docker Compose
-    # Here we use a retry logic to ensure the services start correctly,
-    # noice how we use a sleep between attempts.
-    - echo "Starting deployment with retry logic..."
-    - |
-      for attempt in 1 2 3; do
-        echo "Deployment attempt $attempt..."
-
-        if $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI up -d --no-deps"; then
-          echo "Services started successfully on attempt $attempt"
-          break
-        else
-          echo "Attempt $attempt failed"
-          if [ $attempt -lt 3 ]; then
-            echo "Cleaning up and waiting 30 seconds before retry..."
-            $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI down || true" || true
-            sleep 30
-          else
-            echo "All deployment attempts failed"
-            exit 1
-          fi
-        fi
-      done
+    # Start the services using Docker Compose with retry logic
+    - COMPOSE_FILE="$COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI"
+    - *deploy_with_retry
     
-    # We wait a few seconds and then verify the deployment
+    # Verify the deployment
     - echo "Verifying deployment..."
-    - sleep 10
-    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "cd $STAGING_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
+    - sleep 15
+    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
 
     # Step 5: Validate Deployment
-    # We validate the deployment trough a curl request,
-    # and if we don't get a response, we retry up to 30 times.
-    - echo "=== VALIDATION PHASE ==="
-    - apk add --no-cache curl
-    - |
-      echo "Validating deployment..."
-      for i in {1..30}; do
-        if curl -f -s https://test.sparabot.com/ > /dev/null; then
-          echo "Deployment validated successfully"
-          break
-        fi
-        echo "Attempt $i: Service not ready, waiting..."
-        sleep 10
-        if [ $i -eq 30 ]; then
-          echo "Deployment validation failed"
-          exit 1
-        fi
-      done
+    - VALIDATION_URL="https://test.sparabot.com/"
+    - *validate_deployment
 
     # Step 6: Record successful deployment tag
-    # For rollbacks, we record the current assembly tag (keep last 10, newest last)
-    - echo "=== RECORD SUCCESSFUL TAG ==="
-    - echo "Recording successful deployment tag $CURRENT_ASSEMBLY_TAG"
-    - |
-      $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "\
-        touch $STAGING_TAG_FILE && \
-        (tail -n 9 $STAGING_TAG_FILE 2>/dev/null; echo '$CURRENT_ASSEMBLY_TAG') > $STAGING_TAG_FILE.tmp && \
-        mv $STAGING_TAG_FILE.tmp $STAGING_TAG_FILE"
-    - echo "Staging deployment completed successfully with tag $CURRENT_ASSEMBLY_TAG"
+    - TARGET_TAG_FILE="$STAGING_TAG_FILE"
+    - *record_success
     
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -538,6 +569,41 @@ tag_and_merge:
 
     # Export the assembly tag for the manual merge job (manual trigger).
     - echo "ASSEMBLY_TAG=$ASSEMBLY_TAG" > assembly_tag.env
+
+    # Clean up old tags (keep only last 10 for each component)
+    - echo "=== CLEANING UP OLD TAGS ==="
+    - |
+      for name in message-service llm-service frontend; do
+        echo "Cleaning up old tags for $name..."
+        cd "$name"
+        
+        # Get all passed_test tags sorted by creation date (newest first)
+        TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
+        
+        if [ -n "$TAGS_TO_DELETE" ]; then
+          echo "Deleting old tags for $name: $TAGS_TO_DELETE"
+          for tag in $TAGS_TO_DELETE; do
+            git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
+          done
+        else
+          echo "No old tags to delete for $name"
+        fi
+        
+        cd ..
+      done
+      
+      # Clean up assembly repo tags as well
+      echo "Cleaning up old assembly tags..."
+      ASSEMBLY_TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
+      
+      if [ -n "$ASSEMBLY_TAGS_TO_DELETE" ]; then
+        echo "Deleting old assembly tags: $ASSEMBLY_TAGS_TO_DELETE"
+        for tag in $ASSEMBLY_TAGS_TO_DELETE; do
+          git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
+        done
+      else
+        echo "No old assembly tags to delete"
+      fi
 
   artifacts:
     reports:
@@ -622,152 +688,48 @@ deploy_and_validate_remote_production:
     # Set strict error handling
     - set -euo pipefail
     
-    # Step 1: Production Cleanup (using production-specific cleanup script)
+    # Step 1: Production Cleanup
     - echo "=== PRODUCTION CLEANUP PHASE ==="
     - echo "Cleaning up production server before deployment (preserving databases)"
     - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
     - *cleanup_production_script
 
-    # Step 2: Backup Postgres (from backup_postgres)
-    - echo "=== BACKUP PHASE ==="
-    - echo "Backing up Postgres database with tag-based naming"
-    
-    # Get current assembly tag for backup naming
-    - CURRENT_ASSEMBLY_TAG="production-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "Using assembly tag $CURRENT_ASSEMBLY_TAG"
-    
-    # Create backup archive directory and backup with tag-based name (fixed redirect)
-    - BACKUP_FILE="$PRODUCTION_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
-    - |
-      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
-        set -euo pipefail
-        echo "Creating backup directory $PRODUCTION_BACKUP_ARCHIVE"
-        mkdir -p $PRODUCTION_BACKUP_ARCHIVE
-        echo "Creating production backup $BACKUP_FILE"
-        sudo docker exec -i spara-postgres pg_dumpall -c -U postgres > $BACKUP_FILE 2>&1
-        echo "Production backup created successfully"
-        ls -la $BACKUP_FILE
-      EOF
-    
-    # Keep only the 10 most recent tagged backups
-    - echo "Pruning old tagged Postgres backups, keeping only the 10 most recent..."
-    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "ls -1t $PRODUCTION_BACKUP_ARCHIVE/backup_*.sql | tail -n +11 | xargs -r rm --"
+    # Step 2: Backup Postgres
+    - TARGET_USERNAME="$PRODUCTION_USERNAME"
+    - TARGET_HOST="$PRODUCTION_HOST"
+    - TARGET_BACKUP_ARCHIVE="$PRODUCTION_BACKUP_ARCHIVE"
+    - TARGET_REMOTE_PATH="$PRODUCTION_REMOTE_PATH"
+    - ENVIRONMENT="production"
+    - POSTGRES_CONTAINER="spara-postgres"
+    - *backup_postgres
 
-    # Step 3: Copy files to production server using scp
+    # Step 3: Copy files to production server
     - echo "=== PRODUCTION SYNC PHASE ==="
-    - echo "Copying files to production server (clean deployment)"
-    
-    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "find $PRODUCTION_REMOTE_PATH -mindepth 1 -maxdepth 1 ! -name cicd -exec sudo rm -rf {} +"
-    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "mkdir -p $(dirname $PRODUCTION_REMOTE_PATH)"
-    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "mkdir -p $PRODUCTION_REMOTE_PATH/message-service $PRODUCTION_REMOTE_PATH/llm-service $PRODUCTION_REMOTE_PATH/frontend"
-    
-    # Copy directories and files directly using scp
-    - scp -i ~/.ssh/production_remote_key -r infra/ $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - scp -i ~/.ssh/production_remote_key message-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/message-service/.env
-    - scp -i ~/.ssh/production_remote_key llm-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/llm-service/.env
-    - scp -i ~/.ssh/production_remote_key message-service.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - scp -i ~/.ssh/production_remote_key llm-service.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - scp -i ~/.ssh/production_remote_key frontend.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
+    - SSH_KEY_PATH="~/.ssh/production_remote_key"
+    - *copy_files
 
     # Step 4: Deploy to production
     - echo "=== PRODUCTION DEPLOY PHASE ==="
     - echo "Deploying to production server"
-
-    # Reused logic to check and install Docker if needed
-    - |
-      DOCKER_STATUS=$(ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
-      echo "Docker status: $DOCKER_STATUS"
-      
-      if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
-        echo "Installing Docker on production server..."
-        ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST <<'EOF'
-          set -euo pipefail
-          echo "Installing Docker and docker compose plugin..."
-          sudo apt update
-          sudo apt install -y ca-certificates curl gnupg lsb-release
-          sudo install -m 0755 -d /etc/apt/keyrings
-          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-          sudo chmod a+r /etc/apt/keyrings/docker.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-          sudo apt update
-          sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-      EOF
-      else
-        echo "Docker already installed, skipping installation"
-      fi
+    - *docker_install_check
+    - *load_images
     
-    # Check Docker and Docker Compose versions (important after installation)
-    - ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST 'docker compose version'
+    # Start the services using Docker Compose with retry logic
+    - COMPOSE_FILE="docker-compose.prod.yml"
+    - *deploy_with_retry
     
-    # Load Docker images on the production server
-    - echo "Loading Docker images..."
-    - |
-      ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
-        set -euo pipefail
-        cd $PRODUCTION_REMOTE_PATH
-        sudo docker load -i message-service.tar
-        sudo docker load -i llm-service.tar
-        sudo docker load -i frontend.tar
-      EOF
-    
-    # Start the services using Docker Compose
-    # Here we use a retry logic to ensure the services start correctly,
-    # notice how we use a sleep between attempts.
-    - echo "Starting production deployment with retry logic..."
-    - |
-      for attempt in 1 2 3; do
-        echo "Production deployment attempt $attempt..."
-        
-        if ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST "cd $PRODUCTION_REMOTE_PATH/infra && sudo docker compose -f docker-compose.prod.yml up -d --no-deps"; then
-          echo "Production services started successfully on attempt $attempt"
-          break
-        else
-          echo "Attempt $attempt failed"
-          if [ $attempt -lt 3 ]; then
-            echo "Cleaning up application services and waiting 30 seconds before retry..."
-            ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST "cd $PRODUCTION_REMOTE_PATH/infra && sudo docker compose -f docker-compose.prod.yml stop frontend message-service llm-service && sudo docker compose -f docker-compose.prod.yml rm -f frontend message-service llm-service" || true
-            sleep 30
-          else
-            echo "All production deployment attempts failed"
-            exit 1
-          fi
-        fi
-      done
-    
-    # We wait a few seconds and then verify the deployment
+    # Verify the deployment
     - echo "Verifying production deployment..."
     - sleep 15
-    - ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no $PRODUCTION_USERNAME@$PRODUCTION_HOST "cd $PRODUCTION_REMOTE_PATH/infra && sudo docker compose -f docker-compose.prod.yml ps"
+    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f docker-compose.prod.yml ps"
 
     # Step 5: Validate production deployment
-    # For this we use a simple curl request to the production URL,
-    # and if we don't get a response, we retry up to 30 times.
-    - echo "=== PRODUCTION VALIDATION PHASE ==="
-    - apk add --no-cache curl
-    - |
-      echo "Validating production deployment..."
-      for i in {1..30}; do
-        if curl -f -s https://sparabot.com/ > /dev/null; then
-          echo "Production deployment validated successfully"
-          break
-        fi
-        echo "Attempt $i: Production service not ready, waiting..."
-        sleep 10
-        if [ $i -eq 30 ]; then
-          echo "Production deployment validation failed"
-          exit 1
-        fi
-      done
+    - VALIDATION_URL="https://sparabot.com/"
+    - *validate_deployment
 
-    # Step 6: Record successful production deployment tag (keep last 10, newest last)
-    - echo "=== RECORD SUCCESSFUL PRODUCTION TAG ==="
-    - echo "Recording successful production deployment tag $CURRENT_ASSEMBLY_TAG"
-    - |
-      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "\
-        touch $PRODUCTION_TAG_FILE && \
-        (tail -n 9 $PRODUCTION_TAG_FILE 2>/dev/null; echo '$CURRENT_ASSEMBLY_TAG') > $PRODUCTION_TAG_FILE.tmp && \
-        mv $PRODUCTION_TAG_FILE.tmp $PRODUCTION_TAG_FILE"
-    - echo "Production deployment completed successfully with tag $CURRENT_ASSEMBLY_TAG"
+    # Step 6: Record successful production deployment tag
+    - TARGET_TAG_FILE="$PRODUCTION_TAG_FILE"
+    - *record_success
     
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -888,36 +850,22 @@ rollback_production_on_failure:
     - echo "Building Docker images for rollback..."
     - docker compose -f infra/docker-compose.prod.yml build --no-cache
     
-    # Save images as tar files
-    - docker save -o message-service-rollback.tar spara-message-service:latest
-    - docker save -o llm-service-rollback.tar spara-llm-service:latest  
-    - docker save -o frontend-rollback.tar spara-frontend:latest
+    # Save images as tar files (using standard names for reusability)
+    - docker save -o message-service.tar spara-message-service:latest
+    - docker save -o llm-service.tar spara-llm-service:latest  
+    - docker save -o frontend.tar spara-frontend:latest
     - cd ..
     
-    # Upload rollback images to production server
-    - echo "=== UPLOADING ROLLBACK IMAGES ==="
-    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/message-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/llm-service-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/frontend-rollback.tar $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no -r rollback_repo/infra/ $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/
-    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/message-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/message-service/
-    - scp -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no rollback_repo/llm-service/.env $PRODUCTION_USERNAME@$PRODUCTION_HOST:$PRODUCTION_REMOTE_PATH/llm-service/
+    # Upload rollback images to production server (reusing standard anchor)
+    - TARGET_USERNAME="$PRODUCTION_USERNAME"
+    - TARGET_HOST="$PRODUCTION_HOST"
+    - TARGET_REMOTE_PATH="$PRODUCTION_REMOTE_PATH"
+    - SSH_KEY_PATH="~/.ssh/production_remote_key"
+    - SOURCE_PATH="rollback_repo/"
+    - *copy_files
     
-    # Load rollback images on production server
-    - echo "=== LOADING ROLLBACK IMAGES ==="
-    - |
-      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
-        set -euo pipefail
-        cd $PRODUCTION_REMOTE_PATH
-        
-        echo "Loading rollback Docker images..."
-        sudo docker load -i message-service-rollback.tar
-        sudo docker load -i llm-service-rollback.tar
-        sudo docker load -i frontend-rollback.tar
-        
-        # Clean up tar files
-        rm -f *-rollback.tar
-      EOF
+    # Load rollback images on production server (reusing standard anchor)
+    - *load_images
     
     # Deploy the rollback version
     - echo "=== DEPLOYING ROLLBACK VERSION ==="
