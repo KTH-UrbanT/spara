@@ -339,12 +339,12 @@ deploy_and_validate_remote_staging:
     - BACKUP_FILE="$STAGING_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
     - echo "Creating backup file $BACKUP_FILE"
     - |
-      $SSH_CMD -tt $STAGING_USERNAME@$STAGING_HOST <<EOF
+      $SSH_CMD $STAGING_USERNAME@$STAGING_HOST <<EOF
         set -euo pipefail
         echo "Creating backup directory $STAGING_BACKUP_ARCHIVE"
         mkdir -p $STAGING_BACKUP_ARCHIVE
         echo "Creating backup $BACKUP_FILE"
-        sudo docker exec -t spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE
+        sudo docker exec -i spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE 2>&1
         echo "Backup created successfully"
         ls -la $BACKUP_FILE
       EOF
@@ -634,7 +634,7 @@ deploy_and_validate_remote_production:
         echo "Creating backup directory $PRODUCTION_BACKUP_ARCHIVE"
         mkdir -p $PRODUCTION_BACKUP_ARCHIVE
         echo "Creating production backup $BACKUP_FILE"
-        sudo docker exec -t spara-postgres pg_dumpall -c -U postgres > $BACKUP_FILE
+        sudo docker exec -i spara-postgres pg_dumpall -c -U postgres > $BACKUP_FILE 2>&1
         echo "Production backup created successfully"
         ls -la $BACKUP_FILE
       EOF
