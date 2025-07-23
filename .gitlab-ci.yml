@@ -39,15 +39,16 @@ variables:
   PRODUCTION_USERNAME:        $SSH_PRODUCTION_USERNAME
   PRODUCTION_KEY:             $SSH_PRODUCTION_KEY
   PRODUCTION_PASSWORD:        $SSH_PRODUCTION_PASSWORD
-  PRODUCTION_REMOTE_PATH:     $SSH_PRODUCTION_REMOTE_PATH
+  PRODUCTION_REMOTE_PATH:     /srv/odenlabs/spara
 
   SSH_GITHUB_PRIVATE_KEY:     $SSH_GITHUB_KEY
   
   # Tag tracking files for rollback capability
-  STAGING_TAG_FILE:                      /home/ubuntu/spara_cicd/last_successful_tag.txt
-  PRODUCTION_TAG_FILE:                   /srv/odenlabs/spara_cicd/last_successful_tag.txt
-  STAGING_BACKUP_ARCHIVE:                /home/ubuntu/spara_cicd/tagged_backups
-  PRODUCTION_BACKUP_ARCHIVE:             /srv/odenlabs/spara_cicd/tagged_backups
+  STAGING_TAG_FILE:                      ${STAGING_REMOTE_PATH}/cicd/last_successful_tag.txt
+  PRODUCTION_TAG_FILE:                   ${PRODUCTION_REMOTE_PATH}/cicd/last_successful_tag.txt
+  
+  STAGING_BACKUP_ARCHIVE:                ${STAGING_REMOTE_PATH}/cicd/db_backups
+  PRODUCTION_BACKUP_ARCHIVE:             ${PRODUCTION_REMOTE_PATH}/cicd/db_backups
 
   # Instead of using the repository from GitLab,
   # we get a fresh copy from GitHub. This reduces
@@ -362,7 +363,7 @@ deploy_and_validate_remote_staging:
     - echo "=== SYNC PHASE ==="
     - echo "Copying files to staging server (clean deployment)"
 
-    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "sudo rm -rf $STAGING_REMOTE_PATH/*"
+    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "find $STAGING_REMOTE_PATH -mindepth 1 -maxdepth 1 ! -name cicd -exec sudo rm -rf {} +"
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $(dirname $STAGING_REMOTE_PATH)"
     - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "mkdir -p $STAGING_REMOTE_PATH/message-service $STAGING_REMOTE_PATH/llm-service $STAGING_REMOTE_PATH/frontend"
 
@@ -465,10 +466,14 @@ deploy_and_validate_remote_staging:
       done
 
     # Step 6: Record successful deployment tag
-    # For rollbacks, we record the current assembly tag.
+    # For rollbacks, we record the current assembly tag (keep last 10, newest last)
     - echo "=== RECORD SUCCESSFUL TAG ==="
     - echo "Recording successful deployment tag $CURRENT_ASSEMBLY_TAG"
-    - $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "echo '$CURRENT_ASSEMBLY_TAG' > $STAGING_TAG_FILE"
+    - |
+      $SSH_CMD $STAGING_USERNAME@$STAGING_HOST "\
+        touch $STAGING_TAG_FILE && \
+        (tail -n 9 $STAGING_TAG_FILE 2>/dev/null; echo '$CURRENT_ASSEMBLY_TAG') > $STAGING_TAG_FILE.tmp && \
+        mv $STAGING_TAG_FILE.tmp $STAGING_TAG_FILE"
     - echo "Staging deployment completed successfully with tag $CURRENT_ASSEMBLY_TAG"
     
   rules:
@@ -652,7 +657,7 @@ deploy_and_validate_remote_production:
     - echo "=== PRODUCTION SYNC PHASE ==="
     - echo "Copying files to production server (clean deployment)"
     
-    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "sudo rm -rf $PRODUCTION_REMOTE_PATH/frontend $PRODUCTION_REMOTE_PATH/message-service $PRODUCTION_REMOTE_PATH/llm-service"
+    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "find $PRODUCTION_REMOTE_PATH -mindepth 1 -maxdepth 1 ! -name cicd -exec sudo rm -rf {} +"
     - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "mkdir -p $(dirname $PRODUCTION_REMOTE_PATH)"
     - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "mkdir -p $PRODUCTION_REMOTE_PATH/message-service $PRODUCTION_REMOTE_PATH/llm-service $PRODUCTION_REMOTE_PATH/frontend"
     
@@ -754,10 +759,14 @@ deploy_and_validate_remote_production:
         fi
       done
 
-    # Step 6: Record successful production deployment tag
+    # Step 6: Record successful production deployment tag (keep last 10, newest last)
     - echo "=== RECORD SUCCESSFUL PRODUCTION TAG ==="
     - echo "Recording successful production deployment tag $CURRENT_ASSEMBLY_TAG"
-    - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "echo '$CURRENT_ASSEMBLY_TAG' > $PRODUCTION_TAG_FILE"
+    - |
+      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "\
+        touch $PRODUCTION_TAG_FILE && \
+        (tail -n 9 $PRODUCTION_TAG_FILE 2>/dev/null; echo '$CURRENT_ASSEMBLY_TAG') > $PRODUCTION_TAG_FILE.tmp && \
+        mv $PRODUCTION_TAG_FILE.tmp $PRODUCTION_TAG_FILE"
     - echo "Production deployment completed successfully with tag $CURRENT_ASSEMBLY_TAG"
     
   rules:
@@ -790,10 +799,10 @@ rollback_production_on_failure:
     # Setup SSH for later use
     - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
     
-    # Get the last successful tag,
+    # Get the last successful tag (last line in the file),
     # or throw an error if it doesn't exist.
     - echo "Retrieving last successful production tag..."
-    - LAST_SUCCESSFUL_TAG=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "cat $PRODUCTION_TAG_FILE 2>/dev/null || echo 'NONE'")
+    - LAST_SUCCESSFUL_TAG=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "tail -n 1 $PRODUCTION_TAG_FILE 2>/dev/null || echo 'NONE'")
     - echo "Last successful tag $LAST_SUCCESSFUL_TAG"
     - |
       if [ "$LAST_SUCCESSFUL_TAG" = "NONE" ] || [ -z "$LAST_SUCCESSFUL_TAG" ]; then
