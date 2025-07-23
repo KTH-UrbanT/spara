@@ -344,8 +344,13 @@ deploy_and_validate_remote_staging:
         echo "Creating backup directory $STAGING_BACKUP_ARCHIVE"
         mkdir -p $STAGING_BACKUP_ARCHIVE
         echo "Creating backup $BACKUP_FILE"
-        sudo docker exec -i spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE 2>&1
-        echo "Backup created successfully"
+        if sudo docker exec -i spara-postgres-test pg_dumpall -c -U postgres > $BACKUP_FILE 2>&1; then
+          echo "Backup created successfully"
+        else
+          echo "Backup failed, contents of backup file:"
+          cat $BACKUP_FILE
+          exit 1
+        fi
         ls -la $BACKUP_FILE
       EOF
 
