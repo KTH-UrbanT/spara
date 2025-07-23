@@ -581,7 +581,7 @@ tag_and_merge:
         TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
         
         if [ -n "$TAGS_TO_DELETE" ]; then
-          echo "Deleting old tags for $name: $TAGS_TO_DELETE"
+          echo "Deleting old tags for $name $TAGS_TO_DELETE"
           for tag in $TAGS_TO_DELETE; do
             git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
           done
@@ -597,7 +597,7 @@ tag_and_merge:
       ASSEMBLY_TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
       
       if [ -n "$ASSEMBLY_TAGS_TO_DELETE" ]; then
-        echo "Deleting old assembly tags: $ASSEMBLY_TAGS_TO_DELETE"
+        echo "Deleting old assembly tags $ASSEMBLY_TAGS_TO_DELETE"
         for tag in $ASSEMBLY_TAGS_TO_DELETE; do
           git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
         done
