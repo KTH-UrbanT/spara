@@ -196,9 +196,9 @@ variables:
       ls -la "$BACKUP_FILE"
     EOF
 
-  # Keep only the 10 most recent tagged backups
-  - echo "Pruning old tagged Postgres backups, keeping only the 10 most recent..."
-  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "ls -1t $TARGET_BACKUP_ARCHIVE/backup_*.sql | tail -n +11 | xargs -r rm --"
+  # Keep only the 20 most recent tagged backups
+  - echo "Pruning old tagged Postgres backups, keeping only the 20 most recent..."
+  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "ls -1t $TARGET_BACKUP_ARCHIVE/backup_*.sql | tail -n +21 | xargs -r rm --"
 
 # YAML anchor for loading Docker images
 .load_images_template: &load_images
@@ -570,7 +570,7 @@ tag_and_merge:
     # Export the assembly tag for the manual merge job (manual trigger).
     - echo "ASSEMBLY_TAG=$ASSEMBLY_TAG" > assembly_tag.env
 
-    # Clean up old tags (keep only last 10 for each component)
+    # Clean up old tags (keep only last 20 for each component)
     - echo "=== CLEANING UP OLD TAGS ==="
     - |
       for name in message-service llm-service frontend; do
@@ -578,8 +578,8 @@ tag_and_merge:
         cd "$name"
         
         # Get all passed_test tags sorted by creation date (newest first)
-        TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
-        
+        TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +21)
+
         if [ -n "$TAGS_TO_DELETE" ]; then
           echo "Deleting old tags for $name $TAGS_TO_DELETE"
           for tag in $TAGS_TO_DELETE; do
@@ -594,8 +594,8 @@ tag_and_merge:
       
       # Clean up assembly repo tags as well
       echo "Cleaning up old assembly tags..."
-      ASSEMBLY_TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
-      
+      ASSEMBLY_TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +21)
+
       if [ -n "$ASSEMBLY_TAGS_TO_DELETE" ]; then
         echo "Deleting old assembly tags $ASSEMBLY_TAGS_TO_DELETE"
         for tag in $ASSEMBLY_TAGS_TO_DELETE; do
