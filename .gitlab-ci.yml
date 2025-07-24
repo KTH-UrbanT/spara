@@ -335,12 +335,13 @@ prepare_environment:
 
   artifacts:
     paths:
-      - submodule_shas.txt
-      - message-service/
-      - llm-service/
-      - frontend/
-      - shared/
-      - infra/
+      #- submodule_shas.txt
+      #- message-service/
+      #- llm-service/
+      #- frontend/
+      #- shared/
+      #- infra/
+      - ./
     untracked: false
     expire_in: 1 day
   rules:
@@ -543,9 +544,9 @@ tag_and_merge:
     # Fresh clone for tagging (full depth needed for git operations)
     # Note that we clone into another directory to avoid conflicts,
     # as we allready have the repository in the current directory.
-    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-    - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git tagging_repo
-    - cd tagging_repo
+    #- export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+    #- git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git tagging_repo
+    #- cd tagging_repo
     
     # Tag each submodule at locked SHA, and merge to main.
     # We use the SHAs from the submodule_shas.txt file,
@@ -661,11 +662,12 @@ merge_assembly_to_main:
     # Fresh clone for merging (full depth needed for git operations)
     # Note that we clone into another directory to avoid conflicts,
     # despite not having imported any artifacts through the use of "needs".
-    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-    - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git merge_repo
-    - cd merge_repo
+    #- export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+    #- git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git merge_repo
+    #- cd merge_repo
     
     # Merge the assembly repo's current state/tag to main and push it.
+    - git fetch origin main
     - git checkout main
     - git merge --no-ff "$ASSEMBLY_TAG" -m "Merge assembly release $ASSEMBLY_TAG to main"
     - git push origin main
