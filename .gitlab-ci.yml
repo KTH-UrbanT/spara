@@ -322,8 +322,8 @@ prepare_environment:
     # Record exact SHAs of all submodules, as we will use
     # these to tag the submodules later.
     - echo "Recording submodule SHAs..."
-    - git submodule status > submodule_shas.txt
-    - cat submodule_shas.txt
+    - git submodule status > submodule_shas.env
+    - cat submodule_shas.env
 
     # Inject content into .env files.
     # WARNING: These are a typical source of error.
@@ -552,13 +552,14 @@ tag_and_merge:
     - ls
     - git branch
     - git submodule status
+    - git remote -v
     
     # Tag each submodule at locked SHA, and merge to main.
-    # We use the SHAs from the submodule_shas.txt file,
-    - echo "Reading submodule SHAs from submodule_shas.txt..."
+    # We use the SHAs from the submodule_shas.env file,
+    - echo "Reading submodule SHAs from submodule_shas.env..."
     - |
       for name in message-service llm-service frontend; do
-        SHA=$(grep "$name" submodule_shas.txt | awk '{print $1}')
+        SHA=$(grep "$name" submodule_shas.env | awk '{print $1}')
         TAG_VAR_NAME=$(echo "$name" | tr 'a-z-' 'A-Z_' )_TAG
         TAG_VALUE=$(eval echo \$$TAG_VAR_NAME)
 
