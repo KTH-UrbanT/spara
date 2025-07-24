@@ -551,7 +551,6 @@ tag_and_merge:
     # Tag each submodule at locked SHA, and merge to main.
     # We use the SHAs from the submodule_shas.txt file,
     - echo "Reading submodule SHAs from submodule_shas.txt..."
-    - cp submodule_shas.txt .
     - |
       for name in message-service llm-service frontend; do
         SHA=$(grep "$name" submodule_shas.txt | awk '{print $1}')
@@ -581,7 +580,7 @@ tag_and_merge:
     - git push origin "$ASSEMBLY_TAG"
 
     # Export the assembly tag for the manual merge job (manual trigger).
-    - echo "ASSEMBLY_TAG=$ASSEMBLY_TAG" > ../assembly_tag.env
+    - echo "ASSEMBLY_TAG=$ASSEMBLY_TAG" > assembly_tag.env
 
     # Clean up old tags (keep only last 20 for each component)
     - echo "=== CLEANING UP OLD TAGS ==="
