@@ -174,7 +174,7 @@ variables:
   - echo "Backing up Postgres database with tag-based naming"
   
   # Get current assembly tag for backup naming
-  - CURRENT_ASSEMBLY_TAG="$ENVIRONMENT-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+  - CURRENT_ASSEMBLY_TAG="$ENVIRONMENT-$DEPLOYMENT_TAG"
   - echo "Using assembly tag $CURRENT_ASSEMBLY_TAG"
 
   # Create backup with tag-based name
@@ -366,6 +366,16 @@ build_images:
     # Set strict error handling
     - set -euo pipefail
 
+    # Generate deployment tag that will be used throughout the pipeline
+    - DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - echo "DEPLOYMENT_TAG=$DEPLOYMENT_TAG" > deployment_info.env
+    
+    # Inject deployment info into frontend environment
+    - echo "VITE_DEPLOYMENT_TAG=$DEPLOYMENT_TAG" >> frontend/.env
+    - echo "VITE_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> frontend/.env
+    - echo "VITE_COMMIT_SHA=${CI_COMMIT_SHA}" >> frontend/.env
+    - echo "VITE_BRANCH=${CI_COMMIT_REF_NAME}" >> frontend/.env
+    
     # Build Docker images without using cached layers
     # to ensure we always have the latest code.
     - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache
@@ -379,6 +389,8 @@ build_images:
       - message-service.tar
       - llm-service.tar
       - frontend.tar
+    reports:
+      dotenv: deployment_info.env
     expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -432,9 +444,9 @@ test_all_services:
     # Generate tag names for later use in tagging job
     - touch combined_tags.env
 
-    - MESSAGE_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - LLM_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - FRONTEND_TAG="passed_test-$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - MESSAGE_TAG="passed_test-$DEPLOYMENT_TAG"
+    - LLM_TAG="passed_test-$DEPLOYMENT_TAG"
+    - FRONTEND_TAG="passed_test-$DEPLOYMENT_TAG"
 
     - echo "MESSAGE_SERVICE_TAG=$MESSAGE_TAG" >> combined_tags.env
     - echo "LLM_SERVICE_TAG=$LLM_TAG" >> combined_tags.env
@@ -442,6 +454,8 @@ test_all_services:
   artifacts:
     reports:
       dotenv: combined_tags.env
+  dependencies:
+    - build_images
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
