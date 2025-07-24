@@ -454,8 +454,6 @@ test_all_services:
   artifacts:
     reports:
       dotenv: combined_tags.env
-  dependencies:
-    - build_images
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
