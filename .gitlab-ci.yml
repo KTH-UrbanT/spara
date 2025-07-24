@@ -568,7 +568,7 @@ tag_and_merge:
     - git push origin "$ASSEMBLY_TAG"
 
     # Export the assembly tag for the manual merge job (manual trigger).
-    - echo "ASSEMBLY_TAG=$ASSEMBLY_TAG" > assembly_tag.env
+    - echo "ASSEMBLY_TAG=$ASSEMBLY_TAG" > ../assembly_tag.env
 
     # Clean up old tags (keep only last 20 for each component)
     - echo "=== CLEANING UP OLD TAGS ==="
