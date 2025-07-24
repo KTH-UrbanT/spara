@@ -551,7 +551,7 @@ tag_and_merge:
     # Tag each submodule at locked SHA, and merge to main.
     # We use the SHAs from the submodule_shas.txt file,
     - echo "Reading submodule SHAs from submodule_shas.txt..."
-    - cp ../submodule_shas.txt .
+    - cp submodule_shas.txt .
     - |
       for name in message-service llm-service frontend; do
         SHA=$(grep "$name" submodule_shas.txt | awk '{print $1}')
