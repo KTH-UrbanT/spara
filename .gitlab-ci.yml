@@ -547,6 +547,11 @@ tag_and_merge:
     #- export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
     #- git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git tagging_repo
     #- cd tagging_repo
+
+    - git status
+    - ls
+    - git branch
+    - git submodule status
     
     # Tag each submodule at locked SHA, and merge to main.
     # We use the SHAs from the submodule_shas.txt file,
