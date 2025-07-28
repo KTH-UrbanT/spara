@@ -297,7 +297,22 @@ before_script:
   - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
   - ssh-keyscan -H $STAGING_HOST >> ~/.ssh/known_hosts
   - ssh-keyscan -H $PRODUCTION_HOST >> ~/.ssh/known_hosts
-  
+
+  # Print out trusted hosts for debugging
+  - echo "Trusted hosts:"
+  - cat ~/.ssh/known_hosts
+
+  # Test connectivity before ssh-keyscan
+  - echo "Testing connectivity to staging host..."
+  - nc -zv $STAGING_HOST 22 || echo "Cannot connect to $STAGING_HOST on port 22"
+  - echo "Testing connectivity to production host..."
+  - nc -zv $PRODUCTION_HOST 22 || echo "Cannot connect to $PRODUCTION_HOST on port 22"
+
+  - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+  # Add timeout and error handling for host key scanning
+  - timeout 30 ssh-keyscan -H $STAGING_HOST >> ~/.ssh/known_hosts || echo "Failed to get host keys for $STAGING_HOST"
+  - timeout 30 ssh-keyscan -H $PRODUCTION_HOST >> ~/.ssh/known_hosts || echo "Failed to get host keys for $PRODUCTION_HOST"
+
   # Configure git user for all jobs
   # Note that systems might claim the owner of the SSH key
   # performs these automated actions.
