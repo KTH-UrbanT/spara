@@ -226,7 +226,8 @@ variables:
         echo "Attempt $attempt failed"
         if [ $attempt -lt 3 ]; then
           echo "Cleaning up and waiting 30 seconds before retry..."
-          $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE down || true" || true
+          $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE stop frontend message-service llm-service || true"
+          $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE rm -f frontend message-service llm-service || true"
           sleep 30
         else
           echo "All deployment attempts failed"
