@@ -607,7 +607,7 @@ tag_and_merge:
         git merge --no-ff "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
         echo "7"
         git push origin main
-
+        echo "8"
         cd ..
       done
 
