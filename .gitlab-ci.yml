@@ -566,9 +566,14 @@ tag_and_merge:
         # Tag the submodule at the specified SHA
         echo "Tagging $name at SHA $SHA with tag $TAG_VALUE"
         cd "$name"
+        ls
+        echo "1"
         git fetch origin
+        echo "2"
         git checkout "$SHA"
+        echo "3"
         git tag -a "$TAG_VALUE" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
+        echo "4"
         git push origin "$TAG_VALUE"
 
         # Merge the tagged commit to main
