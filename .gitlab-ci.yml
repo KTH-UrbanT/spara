@@ -319,6 +319,9 @@ prepare_environment:
     - git clone --depth 1 --shallow-submodules --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git .
     - git checkout "$CI_COMMIT_REF_NAME"
 
+    # Add gitlab as remote for tag cleanup
+    - git remote add gitlab git@gitlab.com:urbant/spara/main.git
+
     # Record exact SHAs of all submodules, as we will use
     # these to tag the submodules later.
     - echo "Recording submodule SHAs..."
@@ -607,6 +610,7 @@ tag_and_merge:
           echo "Deleting old tags for $name $TAGS_TO_DELETE"
           for tag in $TAGS_TO_DELETE; do
             git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
+            git push gitlab --delete "$tag" || echo "Failed to delete tag $tag on GitLab (may not exist on remote)"
           done
         else
           echo "No old tags to delete for $name"
@@ -623,6 +627,7 @@ tag_and_merge:
         echo "Deleting old assembly tags $ASSEMBLY_TAGS_TO_DELETE"
         for tag in $ASSEMBLY_TAGS_TO_DELETE; do
           git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
+          git push gitlab --delete "$tag" || echo "Failed to delete tag $tag on GitLab (may not exist on remote)"
         done
       else
         echo "No old assembly tags to delete"
