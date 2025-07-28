@@ -604,7 +604,7 @@ tag_and_merge:
         # Merge the tagged commit to main
         git checkout main
         echo "6"
-        git merge --no-ff --allow-unrelated-histories "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
+        git merge --no-ff "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
         echo "7"
         git push origin main
 
