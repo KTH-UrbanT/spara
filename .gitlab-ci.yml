@@ -289,7 +289,8 @@ before_script:
   - chmod 600 ~/.ssh/production_remote_key
 
   # Store trusted hosts
-  - if [ -z "$STAGING_HOST" ] || [ -z "$PRODUCTION_HOST" ]; then
+  - |
+    if [ -z "$STAGING_HOST" ] || [ -z "$PRODUCTION_HOST" ]; then
       echo "STAGING_HOST and PRODUCTION_HOST must be set"
       exit 1
     fi
