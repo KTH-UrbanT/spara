@@ -682,6 +682,7 @@ merge_assembly_to_main:
   image: alpine:3.18
   resource_group: remote_staging
   needs:
+    - prepare_environment # To get the assembly repo
     - tag_and_merge  # To get the assembly tag
   script:
 
