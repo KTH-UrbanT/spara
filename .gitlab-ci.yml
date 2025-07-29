@@ -703,8 +703,8 @@ merge_assembly_to_main:
     #- cd merge_repo
     
     # Merge the assembly repo's current state/tag to main and push it.
-    - git fetch origin main
-    - git checkout -B main origin/main
+    - git fetch origin main:main
+    - git checkout main
     - git merge --no-ff "$ASSEMBLY_TAG" -m "Merge assembly release $ASSEMBLY_TAG to main"
     - git push origin main
 
