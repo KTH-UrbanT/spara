@@ -690,7 +690,11 @@ merge_assembly_to_main:
     - set -euo pipefail
 
     - echo "Merging assembly tag $ASSEMBLY_TAG to main branch"
-    
+
+    - git status
+    - git branch
+    - git remote -v
+
     # Fresh clone for merging (full depth needed for git operations)
     # Note that we clone into another directory to avoid conflicts,
     # despite not having imported any artifacts through the use of "needs".
