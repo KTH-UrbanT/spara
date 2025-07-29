@@ -598,7 +598,7 @@ tag_and_merge:
 
         # Merge the tagged commit to main
         git checkout main
-        git merge "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
+        git merge --no-ff "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
         git push origin main
         cd ..
       done
@@ -700,7 +700,7 @@ merge_assembly_to_main:
     
     # Merge the assembly repo's current state/tag to main and push it.
     - git fetch origin main
-    - git checkout main
+    - git checkout -B main origin/main
     - git merge --no-ff "$ASSEMBLY_TAG" -m "Merge assembly release $ASSEMBLY_TAG to main"
     - git push origin main
 
