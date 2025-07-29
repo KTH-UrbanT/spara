@@ -196,9 +196,9 @@ variables:
       ls -la "$BACKUP_FILE"
     EOF
 
-  # Keep only the 20 most recent tagged backups
-  - echo "Pruning old tagged Postgres backups, keeping only the 20 most recent..."
-  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "ls -1t $TARGET_BACKUP_ARCHIVE/backup_*.sql | tail -n +21 | xargs -r rm --"
+  # Keep only the most recent tagged backup
+  - echo "Pruning old tagged Postgres backups, keeping only the most recent..."
+  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "ls -1t $TARGET_BACKUP_ARCHIVE/backup_*.sql | tail -n +2 | xargs -r rm --"
 
 # YAML anchor for loading Docker images
 .load_images_template: &load_images
@@ -262,7 +262,7 @@ variables:
   - |
     $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "\
       touch $TARGET_TAG_FILE && \
-      (tail -n 9 $TARGET_TAG_FILE 2>/dev/null; echo '$CURRENT_ASSEMBLY_TAG') > $TARGET_TAG_FILE.tmp && \
+      (tail -n 0 $TARGET_TAG_FILE 2>/dev/null; echo '$CURRENT_ASSEMBLY_TAG') > $TARGET_TAG_FILE.tmp && \
       mv $TARGET_TAG_FILE.tmp $TARGET_TAG_FILE"
   - echo "Deployment completed successfully with tag $CURRENT_ASSEMBLY_TAG"
 
@@ -527,6 +527,10 @@ deploy_and_validate_remote_staging:
     - *docker_install_check
     - *load_images
     
+    # Run database migrations
+    - echo "Running database migrations..."
+    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH && sudo bash manage_migrations.sh"
+
     # Start the services using Docker Compose with retry logic
     - COMPOSE_FILE="$COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI"
     - *deploy_with_retry
@@ -612,7 +616,7 @@ tag_and_merge:
     # Export the assembly tag for the manual merge job (manual trigger).
     - echo "ASSEMBLY_TAG=$ASSEMBLY_TAG" > ../assembly_tag.env
 
-    # Clean up old tags (keep only last 20 for each component)
+    # Clean up old tags (keep only last tag for each component)
     - echo "=== CLEANING UP OLD TAGS ==="
     - |
       for name in message-service llm-service frontend; do
@@ -620,7 +624,7 @@ tag_and_merge:
         cd "$name"
         
         # Get all passed_test tags sorted by creation date (newest first)
-        TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +21)
+        TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
 
         if [ -n "$TAGS_TO_DELETE" ]; then
           echo "Deleting old tags for $name $TAGS_TO_DELETE"
@@ -637,7 +641,7 @@ tag_and_merge:
       
       # Clean up assembly repo tags as well
       echo "Cleaning up old assembly tags..."
-      ASSEMBLY_TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +21)
+      ASSEMBLY_TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
 
       if [ -n "$ASSEMBLY_TAGS_TO_DELETE" ]; then
         echo "Deleting old assembly tags $ASSEMBLY_TAGS_TO_DELETE"
@@ -764,6 +768,10 @@ deploy_and_validate_remote_production:
     - *docker_install_check
     - *load_images
     
+    # Run database migrations
+    - echo "Running database migrations..."
+    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH && sudo bash manage_migrations.sh"
+
     # Start the services using Docker Compose with retry logic
     - COMPOSE_FILE="docker-compose.prod.yml"
     - *deploy_with_retry

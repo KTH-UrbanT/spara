@@ -30,25 +30,27 @@ services:
     volumes:
       - message_store_data:/var/lib/postgresql/data
     #  - ../shared/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   ############################
   #  2.5) Database Migration #
   ############################
-  flyway:
-    image: flyway/flyway:9-alpine
-    container_name: spara-flyway
-    networks:
-      - spara_test_network
+  alembic:
+    build:
+      context: ../shared/alembic
+      dockerfile: Dockerfile
+    container_name: spara-alembic-dev
     depends_on:
-      - message_store
+      message_store:
+        condition: service_healthy
     environment:
-      - FLYWAY_URL=jdbc:postgresql://message_store:5432/message_store
-      - FLYWAY_USER=postgres
-      - FLYWAY_PASSWORD=postgres
-      - FLYWAY_BASELINE_ON_MIGRATE=true
+      - ALEMBIC_DB_URL=postgresql://postgres:postgres@message_store:5432/message_store
     volumes:
-      - ../shared/db/migrations:/flyway/sql:ro
-    command: migrate
+      - ../shared/alembic/migrations:/migrations
     restart: "no"  # Run once and exit
 
   ############################
