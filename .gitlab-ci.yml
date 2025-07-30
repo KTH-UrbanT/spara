@@ -170,6 +170,9 @@ variables:
   - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "find $TARGET_REMOTE_PATH -mindepth 1 -maxdepth 1 ! -name cicd -exec sudo rm -rf {} +"
   - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "mkdir -p $(dirname $TARGET_REMOTE_PATH)"
   - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "mkdir -p $TARGET_REMOTE_PATH/message-service $TARGET_REMOTE_PATH/llm-service $TARGET_REMOTE_PATH/frontend"
+
+  # Install rsync if not already installed
+  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST 'command -v rsync >/dev/null 2>&1 || { echo "Installing rsync..."; sudo apt update && sudo apt install -y rsync; }'
   
   # Use rsync for efficient incremental file transfer (SOURCE_PATH allows flexibility for rollback scenarios)
   - rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}infra/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/infra/
@@ -269,13 +272,14 @@ variables:
     done
 
 # YAML anchor for recording success pattern
+
 .record_success_template: &record_success
   - echo "=== RECORD SUCCESSFUL TAG ==="
   - echo "Recording successful deployment tag $CURRENT_ASSEMBLY_TAG"
   - |
     $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "\
       touch $TARGET_TAG_FILE && \
-      (tail -n 0 $TARGET_TAG_FILE 2>/dev/null; echo '$CURRENT_ASSEMBLY_TAG') > $TARGET_TAG_FILE.tmp && \
+      (cat $TARGET_TAG_FILE 2>/dev/null; echo '$CURRENT_ASSEMBLY_TAG') | tail -n 10 > $TARGET_TAG_FILE.tmp && \
       mv $TARGET_TAG_FILE.tmp $TARGET_TAG_FILE"
   - echo "Deployment completed successfully with tag $CURRENT_ASSEMBLY_TAG"
 
@@ -508,7 +512,7 @@ deploy_and_validate_remote_staging:
   stage: deploy_staging
   image: alpine:3.18
   resource_group: remote_staging
-  interruptible: false  # Don't interrupt deployment once started
+  interruptible: true  # Don't interrupt deployment once started
   script:
 
     # Set strict error handling
@@ -547,7 +551,7 @@ deploy_and_validate_remote_staging:
 
     # Start the services using Docker Compose with retry logic
     - *deploy_with_retry
-    
+
     # Verify the deployment
     - echo "Verifying deployment..."
     - sleep 15
