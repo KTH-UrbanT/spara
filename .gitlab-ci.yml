@@ -267,7 +267,7 @@ variables:
     SLEEPTIME_TWO=2
     for attempt in 1 2 3; do
       echo "Starting migration service on attempt $attempt..."
-      if if $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE up -d migration-service"; then
+      if $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE up -d migration-service"; then
         echo "Migration service started successfully"
         break
       else
@@ -279,6 +279,7 @@ variables:
           exit 1
         fi
       fi
+    done
 
 # YAML anchor for validation pattern
 .validate_deployment_template: &validate_deployment
