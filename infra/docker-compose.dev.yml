@@ -44,7 +44,7 @@ services:
     environment:
       - ALEMBIC_DB_URL=postgresql://postgres:postgres@message_store:5432/message_store
     volumes:
-      - ../shared/alembic/migrations:/migrations
+      - ../shared/alembic/migrations:/app/migrations
     restart: "no"  # Run once and exit
 
   ############################
