@@ -529,7 +529,7 @@ deploy_and_validate_remote_staging:
     
     # Run database migrations
     - echo "Running database migrations..."
-    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH && sudo bash manage_migrations.sh"
+    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration-service alembic upgrade head || true"
 
     # Start the services using Docker Compose with retry logic
     - COMPOSE_FILE="$COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI"
@@ -770,7 +770,7 @@ deploy_and_validate_remote_production:
     
     # Run database migrations
     - echo "Running database migrations..."
-    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH && sudo bash manage_migrations.sh"
+    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration-service alembic upgrade head || true"
 
     # Start the services using Docker Compose with retry logic
     - COMPOSE_FILE="docker-compose.prod.yml"
