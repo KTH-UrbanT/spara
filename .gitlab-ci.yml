@@ -503,6 +503,7 @@ combine_build_images:
   image: docker:24.0-cli
   interruptible: true
   needs: 
+    - prepare_environment
     - build_frontend
     - build_message_service
     - build_llm_service
