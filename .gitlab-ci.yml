@@ -243,6 +243,7 @@ variables:
 .deploy_with_retry_template: &deploy_with_retry
   - echo "Starting deployment with retry logic..."
   - |
+    SLEEPTIME_ONE=2
     for attempt in 1 2 3; do
       echo "Deployment attempt $attempt..."
 
@@ -251,19 +252,33 @@ variables:
         break
       else
         echo "Attempt $attempt failed"
-        SLEEPTIME=2
         if [ $attempt -lt 5 ]; then
-          echo "Cleaning up and waiting $SLEEPTIME seconds before retry..."
+          echo "Cleaning up and waiting $SLEEPTIME_ONE seconds before retry..."
           $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE stop frontend message-service llm-service || true"
           $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE rm -f frontend message-service llm-service || true"
-          sleep $SLEEPTIME
-          SLEEPTIME=$((SLEEPTIME * 2))
+          sleep $SLEEPTIME_ONE
+          SLEEPTIME_ONE=$((SLEEPTIME_ONE * 2))
         else
           echo "All deployment attempts failed"
           exit 1
         fi
       fi
     done
+    SLEEPTIME_TWO=2
+    for attempt in 1 2 3; do
+      echo "Starting migration service on attempt $attempt..."
+      if if $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE up -d migration-service"; then
+        echo "Migration service started successfully"
+        break
+      else
+        echo "Attempt $attempt failed to start migration service"
+        if [ $attempt -lt 5 ]; then
+          # No nothing...
+        else
+          echo "All attempts to start migration service failed"
+          exit 1
+        fi
+      fi
 
 # YAML anchor for validation pattern
 .validate_deployment_template: &validate_deployment
