@@ -411,8 +411,6 @@ prepare_environment:
       - ./
     untracked: false
     expire_in: 1 day
-  reports:
-    dotenv: deployment_info.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
