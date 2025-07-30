@@ -1,0 +1,6 @@
+# We overwrite the network to ensure
+# comparatbility with GitLab CI/CD
+networks:
+  spara_test_network:
+    external: true
+

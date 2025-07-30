@@ -23,7 +23,29 @@ services:
       POSTGRES_DB: message_store
     volumes:
       - message_store_data:/var/lib/postgresql/data
-      - ../shared/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      #- ../shared/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ############################
+  #  2.5) Database Migration #
+  ############################
+  migration-service:
+    build:
+      context: ../shared/alembic
+      dockerfile: Dockerfile
+    container_name: spara-alembic-dev
+    depends_on:
+      message_store:
+        condition: service_healthy
+    environment:
+      - ALEMBIC_DB_URL=postgresql://postgres:postgres@message_store:5432/message_store
+    volumes:
+      - ../shared/alembic/migrations:/migrations
+    restart: "no"  # Run once and exit
 
   ############################
   #  3) Message Service      #
