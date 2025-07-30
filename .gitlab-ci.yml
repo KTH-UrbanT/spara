@@ -86,7 +86,7 @@ variables:
         echo "No existing deployment found or compose file not found."
       fi
 
-      echo "Disk usage before cleanup:"
+      echo "Disk usage before cleanup"
       df -h /
 
       echo "Safe Docker cleanup..."
@@ -945,3 +945,7 @@ rollback_production_on_failure:
       when: on_failure
 
 
+# Manual rollback of production to last successful deployment.
+# This job is manually triggered to restore the last successful deployment
+# by restoring the database and deploying the last successful code version.
+# ...
