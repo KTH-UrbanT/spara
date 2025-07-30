@@ -724,11 +724,17 @@ merge_assembly_to_main:
     # Note that we clone into another directory to avoid conflicts,
     # despite not having imported any artifacts through the use of "needs".
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-    #- git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git merge_repo
-    #- cd merge_repo
+    - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git merge_repo
+    - cd merge_repo
+
+
+
+    - git status
+    - git branch
+    - git remote -v
     
     # Merge the assembly repo's current state/tag to main and push it.
-    - git fetch origin main:main
+    - git fetch origin main
     - git checkout main
     - git merge --no-ff "$ASSEMBLY_TAG" -m "Merge assembly release $ASSEMBLY_TAG to main"
     - git push origin main
@@ -759,6 +765,8 @@ deploy_and_validate_remote_production:
   resource_group: remote_production
   interruptible: false  # Don't interrupt deployment once started
   script:
+
+    - exit 0 # Exit early if this is a hotfix, to avoid deploying to production.
 
     # Set strict error handling
     - set -euo pipefail
@@ -830,6 +838,8 @@ rollback_production_on_failure:
   needs:
     - deploy_and_validate_remote_production
   script:
+
+    - exit 0 # Exit early if this is a hotfix, to avoid deploying to production.
 
     # Set strict error handling
     - set -euo pipefail
