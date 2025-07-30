@@ -71,17 +71,20 @@ variables:
       if [ -d "$CLEANUP_REMOTE_PATH/infra" ] && [ -f "$CLEANUP_REMOTE_PATH/infra/$CLEANUP_COMPOSE_FILE" ]; then
         cd $CLEANUP_REMOTE_PATH/infra
         
-        # Stop only application services, keep databases running
-        sudo docker compose -f $CLEANUP_COMPOSE_FILE stop frontend message-service llm-service || true
-        sudo docker compose -f $CLEANUP_COMPOSE_FILE rm -f frontend message-service llm-service || true
-        echo "Stopped application services (frontend, message-service, llm-service)."
-        
+        # Stop application services and redis, keep postgres running
+        sudo docker compose -f $CLEANUP_COMPOSE_FILE stop frontend message-service llm-service redis || true
+        sudo docker compose -f $CLEANUP_COMPOSE_FILE rm -f frontend message-service llm-service redis || true
+        echo "Stopped application services (frontend, message-service, llm-service, redis)."
+
         # Remove old application images to free space
         sudo docker rmi spara-frontend:latest 2>/dev/null || true
         sudo docker rmi spara-message-service:latest 2>/dev/null || true
         sudo docker rmi spara-llm-service:latest 2>/dev/null || true
-        
-        echo "Database services (redis, postgres) remain untouched."
+
+        # Optionally clear redis data volume (uncomment if you want to clear redis data)
+        # sudo docker volume rm $(sudo docker volume ls -q | grep redis) 2>/dev/null || true
+
+        echo "Database service (postgres) remains untouched."
         
         # Remove only Docker image tarballs older than 7 days to free up disk space
         sudo find $CLEANUP_REMOTE_PATH -maxdepth 1 -name "*.tar" -mtime +7 -exec rm -f {} \; 2>/dev/null || true
@@ -397,19 +400,14 @@ prepare_environment:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Build Images
+# Preapre deployment tag
 #
-# Here we build the Docker images for the services, using the Docker Compose file,
-# and save them as tar files for later use (to speed up deployment). The tar-files
-# are sent as artifacts.
-build_images:
+# In this job we generate a deployment tag that will be used
+# throughout the pipeline. This tag is used to identify the deployment
+deployment_tag:
   stage: prepare
   image: docker:24.0-cli
   interruptible: true
-  needs: 
-    - prepare_environment
-  services:
-    - docker:dind
   variables:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
@@ -426,20 +424,121 @@ build_images:
     - echo "VITE_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> frontend/.env
     - echo "VITE_COMMIT_SHA=${CI_COMMIT_SHA}" >> frontend/.env
     - echo "VITE_BRANCH=${CI_COMMIT_REF_NAME}" >> frontend/.env
-    
-    # Build Docker images without using cached layers
-    # to ensure we always have the latest code.
-    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache
+  artifacts:
+    paths:
+      - deployment_info.env
+    reports:
+      dotenv: deployment_info.env
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-    # Save Docker images as tar files
-    - docker save -o message-service.tar message-service:test
-    - docker save -o llm-service.tar llm-service:test
+# Build jobs
+#
+# We have multiple build jobs, one for each service, to
+# make use of parallelism.
+build_frontend:
+  stage: prepare
+  image: docker:24.0-cli
+  interruptible: true
+  needs: 
+    - prepare_environment
+    - deployment_tag
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  script:
+    # Set strict error handling
+    - set -euo pipefail
+
+    # Build the frontend image
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache frontend
+
+    # Save the Docker image as a tar file
     - docker save -o frontend.tar frontend:test
+
+  artifacts:
+    paths:
+      - frontend.tar
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+build_message_service:
+  stage: prepare
+  image: docker:24.0-cli
+  interruptible: true
+  needs: 
+    - prepare_environment
+    - deployment_tag
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  script:
+    # Set strict error handling
+    - set -euo pipefail
+
+    # Build the message-service image
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache message-service
+
+    # Save the Docker image as a tar file
+    - docker save -o message-service.tar message-service:test
+
   artifacts:
     paths:
       - message-service.tar
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+build_llm_service:
+  stage: prepare
+  image: docker:24.0-cli
+  interruptible: true
+  needs:  
+    - prepare_environment
+    - deployment_tag
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  script:
+    # Set strict error handling
+    - set -euo pipefail
+    # Build the llm-service image
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache llm-service
+    # Save the Docker image as a tar file
+    - docker save -o llm-service.tar llm-service:test
+
+  artifacts:
+    paths:
       - llm-service.tar
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+combine_build_images:
+  stage: prepare
+  image: docker:24.0-cli
+  interruptible: true
+  needs: 
+    - build_frontend
+    - build_message_service
+    - build_llm_service
+  script:
+    # This job simply combines the built images into a single job
+    # so that they can be used in the test job.
+    # It is not strictly necessary, but it makes the pipeline cleaner.
+    - set -euo pipefail
+    - echo "Combining built jobs into a single job"
+  artifacts:
+    paths:
       - frontend.tar
+      - message-service.tar
+      - llm-service.tar
     reports:
       dotenv: deployment_info.env
     expire_in: 1 day
@@ -456,7 +555,7 @@ test_all_services:
   image: docker:24.0-cli
   interruptible: true
   needs:
-    - build_images
+    - combine_build_images
     - prepare_environment
   services:
     - docker:dind
@@ -515,7 +614,7 @@ test_all_services:
 # Only runs after tests pass successfully on GitLab servers.
 deploy_and_validate_remote_staging:
   needs:
-    - build_images
+    - combine_build_images
     - prepare_environment
     - test_all_services  # Wait for tests to pass before deploying
   stage: deploy_staging
@@ -716,22 +815,12 @@ merge_assembly_to_main:
 
     - echo "Merging assembly tag $ASSEMBLY_TAG to main branch"
 
-    - git status
-    - git branch
-    - git remote -v
-
     # Fresh clone for merging (full depth needed for git operations)
     # Note that we clone into another directory to avoid conflicts,
     # despite not having imported any artifacts through the use of "needs".
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
     - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git merge_repo
     - cd merge_repo
-
-
-
-    - git status
-    - git branch
-    - git remote -v
     
     # Merge the assembly repo's current state/tag to main and push it.
     - git fetch origin main
@@ -756,7 +845,7 @@ merge_assembly_to_main:
 # (highlighting importance of well informed developers).
 deploy_and_validate_remote_production:
   needs:
-    - build_images
+    - combine_build_images
     - prepare_environment
     - test_all_services  # Wait for tests to pass before deploying
     - merge_assembly_to_main
@@ -765,8 +854,6 @@ deploy_and_validate_remote_production:
   resource_group: remote_production
   interruptible: false  # Don't interrupt deployment once started
   script:
-
-    - exit 0 # Exit early if this is a hotfix, to avoid deploying to production.
 
     # Set strict error handling
     - set -euo pipefail
@@ -819,7 +906,7 @@ deploy_and_validate_remote_production:
     - *record_success
     
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # Rollback Production On Failure
 #
@@ -838,8 +925,6 @@ rollback_production_on_failure:
   needs:
     - deploy_and_validate_remote_production
   script:
-
-    - exit 0 # Exit early if this is a hotfix, to avoid deploying to production.
 
     # Set strict error handling
     - set -euo pipefail
@@ -977,7 +1062,7 @@ rollback_production_on_failure:
     - echo "Services should be fully operational."
     
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: on_failure
 
 
