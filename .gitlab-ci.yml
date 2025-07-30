@@ -185,6 +185,7 @@ variables:
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}message-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service.tar
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}llm-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service.tar
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}frontend.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend.tar
+  - rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
 
 # YAML anchor for backup pattern
 .backup_postgres_template: &backup_postgres
@@ -302,6 +303,10 @@ before_script:
 
   # Prepare SSH dir and keys
   - mkdir -p ~/.ssh
+  # Configure SSH multiplexing for faster connections (must be before any SSH/Git usage)
+  - echo -e "Host *\n  ControlMaster auto\n  ControlPath ~/.ssh/cm_socket_%r@%h:%p\n  ControlPersist 10m" > ~/.ssh/config
+  - chmod 600 ~/.ssh/config
+  # Add SSH keys
   - echo "$SSH_GITHUB_PRIVATE_KEY" > ~/.ssh/github_key
   - chmod 600 ~/.ssh/github_key
   - echo "$STAGING_KEY" > ~/.ssh/staging_remote_key
