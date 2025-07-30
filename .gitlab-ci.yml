@@ -82,31 +82,42 @@ variables:
         sudo docker rmi spara-llm-service:latest 2>/dev/null || true
         
         echo "Database services (redis, postgres) remain untouched."
+        
+        # Remove only Docker image tarballs older than 7 days to free up disk space
+        sudo find $CLEANUP_REMOTE_PATH -maxdepth 1 -name "*.tar" -mtime +7 -exec rm -f {} \; 2>/dev/null || true
       else
         echo "No existing deployment found or compose file not found."
       fi
 
-      echo "Disk usage before cleanup"
-      df -h /
-
-      echo "Safe Docker cleanup..."
-      # Remove stopped containers (but not database containers)
-      sudo docker rm \$(sudo docker ps -aq -f status=exited) 2>/dev/null || true
-
-      # Remove dangling (untagged) images only
-      sudo docker rmi \$(sudo docker images -f dangling=true -q) 2>/dev/null || true
-
-      # Clean up /tmp and old logs (conservative approach)
-      find /tmp -mtime +7 -and -not -exec fuser -s {} ';' -exec rm -rf {} + 2>/dev/null || true
-      sudo find /var/log -type f -name "*.gz" -mtime +30 -delete 2>/dev/null || true
-
-      echo "Disk usage after cleanup:"
-      df -h /
-
+      # Check disk usage and perform cleanup if necessary
       USAGE=\$(df / | awk 'NR==2 {print \$5}' | tr -d '%')
-      if [ "\$USAGE" -gt 90 ]; then
-        echo "WARNING: Root filesystem is over 90% full. Manual intervention may be needed."
-        echo "Database volumes and data have been preserved."
+      if [ "\$USAGE" -gt 75 ]; then
+
+        echo "Disk usage before cleanup"
+        df -h /
+
+        echo "Safe Docker cleanup..."
+        # Remove stopped containers (but not database containers)
+        sudo docker rm \$(sudo docker ps -aq -f status=exited) 2>/dev/null || true
+
+        # Remove dangling (untagged) images only
+        sudo docker rmi \$(sudo docker images -f dangling=true -q) 2>/dev/null || true
+
+        # Clean up /tmp and old logs (conservative approach)
+        find /tmp -mtime +7 -and -not -exec fuser -s {} ';' -exec rm -rf {} + 2>/dev/null || true
+        sudo find /var/log -type f -name "*.gz" -mtime +30 -delete 2>/dev/null || true
+
+        echo "Disk usage after cleanup:"
+        df -h /
+
+        USAGE=\$(df / | awk 'NR==2 {print \$5}' | tr -d '%')
+        if [ "\$USAGE" -gt 90 ]; then
+          echo "WARNING: Root filesystem is over 90% full. Manual intervention may be needed."
+          echo "Database volumes and data have been preserved."
+        fi
+
+      else
+        echo "Disk usage is below 75%, no cleanup needed."
       fi
     EOF
 
@@ -160,13 +171,13 @@ variables:
   - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "mkdir -p $(dirname $TARGET_REMOTE_PATH)"
   - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "mkdir -p $TARGET_REMOTE_PATH/message-service $TARGET_REMOTE_PATH/llm-service $TARGET_REMOTE_PATH/frontend"
   
-  # Copy directories and files directly using scp (SOURCE_PATH allows flexibility for rollback scenarios)
-  - scp -i $SSH_KEY_PATH -r ${SOURCE_PATH:-}infra/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/
-  - scp -i $SSH_KEY_PATH ${SOURCE_PATH:-}message-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service/.env
-  - scp -i $SSH_KEY_PATH ${SOURCE_PATH:-}llm-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service/.env
-  - scp -i $SSH_KEY_PATH ${SOURCE_PATH:-}message-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/
-  - scp -i $SSH_KEY_PATH ${SOURCE_PATH:-}llm-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/
-  - scp -i $SSH_KEY_PATH ${SOURCE_PATH:-}frontend.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/
+  # Use rsync for efficient incremental file transfer (SOURCE_PATH allows flexibility for rollback scenarios)
+  - rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}infra/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/infra/
+  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}message-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service/.env
+  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}llm-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service/.env
+  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}message-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service.tar
+  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}llm-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service.tar
+  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}frontend.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend.tar
 
 # YAML anchor for backup pattern
 .backup_postgres_template: &backup_postgres
@@ -224,11 +235,13 @@ variables:
         break
       else
         echo "Attempt $attempt failed"
-        if [ $attempt -lt 3 ]; then
-          echo "Cleaning up and waiting 30 seconds before retry..."
+        SLEEPTIME=2
+        if [ $attempt -lt 5 ]; then
+          echo "Cleaning up and waiting $SLEEPTIME seconds before retry..."
           $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE stop frontend message-service llm-service || true"
           $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE rm -f frontend message-service llm-service || true"
-          sleep 30
+          sleep $SLEEPTIME
+          SLEEPTIME=$((SLEEPTIME * 2))
         else
           echo "All deployment attempts failed"
           exit 1
@@ -299,19 +312,19 @@ before_script:
   - ssh-keyscan -H $PRODUCTION_HOST >> ~/.ssh/known_hosts
 
   # Print out trusted hosts for debugging
-  - echo "Trusted hosts:"
-  - cat ~/.ssh/known_hosts
+  #- echo "Trusted hosts:"
+  #- cat ~/.ssh/known_hosts
 
   # Test connectivity before ssh-keyscan
-  - echo "Testing connectivity to staging host..."
-  - nc -zv $STAGING_HOST 22 || echo "Cannot connect to $STAGING_HOST on port 22"
-  - echo "Testing connectivity to production host..."
-  - nc -zv $PRODUCTION_HOST 22 || echo "Cannot connect to $PRODUCTION_HOST on port 22"
+  #- echo "Testing connectivity to staging host..."
+  #- nc -zv $STAGING_HOST 22 || echo "Cannot connect to $STAGING_HOST on port 22"
+  #- echo "Testing connectivity to production host..."
+  #- nc -zv $PRODUCTION_HOST 22 || echo "Cannot connect to $PRODUCTION_HOST on port 22"
 
   - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
   # Add timeout and error handling for host key scanning
-  - timeout 30 ssh-keyscan -H $STAGING_HOST >> ~/.ssh/known_hosts || echo "Failed to get host keys for $STAGING_HOST"
-  - timeout 30 ssh-keyscan -H $PRODUCTION_HOST >> ~/.ssh/known_hosts || echo "Failed to get host keys for $PRODUCTION_HOST"
+  #- timeout 30 ssh-keyscan -H $STAGING_HOST >> ~/.ssh/known_hosts || echo "Failed to get host keys for $STAGING_HOST"
+  #- timeout 30 ssh-keyscan -H $PRODUCTION_HOST >> ~/.ssh/known_hosts || echo "Failed to get host keys for $PRODUCTION_HOST"
 
   # Configure git user for all jobs
   # Note that systems might claim the owner of the SSH key
