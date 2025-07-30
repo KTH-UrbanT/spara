@@ -183,11 +183,15 @@ variables:
   
   # Use rsync for efficient incremental file transfer (SOURCE_PATH allows flexibility for rollback scenarios)
   - rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}infra/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/infra/
+
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}message-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service/.env
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}llm-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service/.env
+  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}frontend/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend/.env
+
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}message-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service.tar
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}llm-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service.tar
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}frontend.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend.tar
+
   - rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
 
 # YAML anchor for backup pattern
@@ -383,6 +387,16 @@ prepare_environment:
     - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
     - echo "$LLM_SERVICE_ENV"     > llm-service/.env
 
+    # Generate deployment tag that will be used throughout the pipeline
+    - DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - echo "DEPLOYMENT_TAG=$DEPLOYMENT_TAG" > deployment_info.env
+    
+    # Inject deployment info into frontend environment
+    - echo "VITE_DEPLOYMENT_TAG=$DEPLOYMENT_TAG" >> frontend/.env
+    - echo "VITE_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> frontend/.env
+    - echo "VITE_COMMIT_SHA=${CI_COMMIT_SHA}" >> frontend/.env
+    - echo "VITE_BRANCH=${CI_COMMIT_REF_NAME}" >> frontend/.env
+
     # Final debugging
     - ls
 
@@ -397,39 +411,8 @@ prepare_environment:
       - ./
     untracked: false
     expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Preapre deployment tag
-#
-# In this job we generate a deployment tag that will be used
-# throughout the pipeline. This tag is used to identify the deployment
-deployment_tag:
-  stage: prepare
-  image: docker:24.0-cli
-  interruptible: true
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
-    # Set strict error handling
-    - set -euo pipefail
-
-    # Generate deployment tag that will be used throughout the pipeline
-    - DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "DEPLOYMENT_TAG=$DEPLOYMENT_TAG" > deployment_info.env
-    
-    # Inject deployment info into frontend environment
-    - echo "VITE_DEPLOYMENT_TAG=$DEPLOYMENT_TAG" >> frontend/.env
-    - echo "VITE_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> frontend/.env
-    - echo "VITE_COMMIT_SHA=${CI_COMMIT_SHA}" >> frontend/.env
-    - echo "VITE_BRANCH=${CI_COMMIT_REF_NAME}" >> frontend/.env
-  artifacts:
-    paths:
-      - deployment_info.env
-    reports:
-      dotenv: deployment_info.env
-    expire_in: 1 day
+  reports:
+    dotenv: deployment_info.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -443,7 +426,6 @@ build_frontend:
   interruptible: true
   needs: 
     - prepare_environment
-    - deployment_tag
   services:
     - docker:dind
   variables:
@@ -471,7 +453,6 @@ build_message_service:
   interruptible: true
   needs: 
     - prepare_environment
-    - deployment_tag
   services:
     - docker:dind
   variables:
@@ -499,7 +480,6 @@ build_llm_service:
   interruptible: true
   needs:  
     - prepare_environment
-    - deployment_tag
   services:
     - docker:dind
   variables:
