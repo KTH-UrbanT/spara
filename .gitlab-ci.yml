@@ -172,7 +172,11 @@ variables:
   - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "mkdir -p $TARGET_REMOTE_PATH/message-service $TARGET_REMOTE_PATH/llm-service $TARGET_REMOTE_PATH/frontend"
 
   # Install rsync if not already installed
-  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST 'command -v rsync >/dev/null 2>&1 || { echo "Installing rsync..."; sudo apt update && sudo apt install -y rsync; }'
+  - |
+    if ! command -v rsync >/dev/null 2>&1; then
+      echo "rsync not found, installing...";
+      apk add --no-cache rsync;
+    fi
   
   # Use rsync for efficient incremental file transfer (SOURCE_PATH allows flexibility for rollback scenarios)
   - rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}infra/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/infra/
