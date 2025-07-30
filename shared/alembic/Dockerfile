@@ -12,3 +12,4 @@ COPY migrations/ ./migrations/
 COPY alembic.ini ./alembic.ini
 
 #CMD alembic upgrade head
+CMD ["alembic", "upgrade", "head"]
