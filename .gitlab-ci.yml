@@ -212,6 +212,13 @@ variables:
       set -euo pipefail
       echo "Creating backup directory $TARGET_BACKUP_ARCHIVE"
       mkdir -p $TARGET_BACKUP_ARCHIVE
+
+      # Check if the Postgres container exists and is running
+      if ! sudo docker ps --format '{{.Names}}' | grep -q "^$POSTGRES_CONTAINER\$"; then
+        echo "Postgres container $POSTGRES_CONTAINER is not running. Skipping backup."
+        exit 0
+      fi
+
       echo "Waiting for Postgres to be ready..."
       for i in {1..30}; do
         if sudo docker exec $POSTGRES_CONTAINER pg_isready -U postgres; then
