@@ -244,7 +244,7 @@ variables:
   - echo "Starting deployment with retry logic..."
   - |
     SLEEPTIME_ONE=2
-    for attempt in 1 2 3; do
+    for attempt in 1 2 3 4 5; do
       echo "Deployment attempt $attempt..."
 
       if $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE up -d --no-deps"; then
@@ -265,7 +265,7 @@ variables:
       fi
     done
     SLEEPTIME_TWO=2
-    for attempt in 1 2 3; do
+    for attempt in 1 2 3 4 5; do
       echo "Starting migration service on attempt $attempt..."
       if $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE up -d migration-service"; then
         echo "Migration service started successfully"
@@ -273,7 +273,8 @@ variables:
       else
         echo "Attempt $attempt failed to start migration service"
         if [ $attempt -lt 5 ]; then
-          # No nothing...
+          # Do nothing...
+          :
         else
           echo "All attempts to start migration service failed"
           exit 1
