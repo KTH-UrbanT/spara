@@ -265,6 +265,7 @@ variables:
       fi
     done
 
+
 # YAML anchor for validation pattern
 .validate_deployment_template: &validate_deployment
   - echo "=== VALIDATION PHASE ==="
