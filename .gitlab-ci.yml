@@ -211,7 +211,7 @@ variables:
     $SSH_CMD $TARGET_USERNAME@$TARGET_HOST <<EOF
       set -euo pipefail
       echo "Creating backup directory $TARGET_BACKUP_ARCHIVE"
-      mkdir -p $TARGET_BACKUP_ARCHIVE
+      sudo mkdir -p $TARGET_BACKUP_ARCHIVE
 
       # Check if the Postgres container exists and is running
       if sudo docker ps --format '{{.Names}}' | grep -q "^$POSTGRES_CONTAINER\$"; then
