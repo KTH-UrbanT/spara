@@ -285,7 +285,7 @@ variables:
     SLEEPTIME_TWO=4
     for attempt in 1 2 3 4 5; do
       echo "Starting migration service on attempt $attempt..."
-      if $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE up -d migration-service"; then
+      if $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE up -d migration_service"; then
         echo "Migration service started successfully"
         break
       else
@@ -670,7 +670,7 @@ deploy_and_validate_remote_staging:
     # Run database migrations
     - echo "Running database migrations..."
     - export COMPOSE_FILE="$COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI"
-    #- $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration-service alembic upgrade head || true"
+    #- $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration_service alembic upgrade head || true"
 
     # Start the services using Docker Compose with retry logic
     - *deploy_with_retry
@@ -901,7 +901,7 @@ deploy_and_validate_remote_production:
     
     # Run database migrations
     - echo "Running database migrations..."
-    #- $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration-service alembic upgrade head || true"
+    #- $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration_service alembic upgrade head || true"
 
     # Start the services using Docker Compose with retry logic
     - COMPOSE_FILE="docker-compose.prod.yml"
