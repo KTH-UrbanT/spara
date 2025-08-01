@@ -33,7 +33,7 @@ services:
   ############################
   #  2.5) Database Migration #
   ############################
-  migration-service:
+  migration_service:
     build:
       context: ../shared/alembic
       dockerfile: Dockerfile
