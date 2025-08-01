@@ -192,7 +192,7 @@ variables:
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}llm-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service.tar
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}frontend.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend.tar
 
-  - rsync -az --delete --exclude='alembic/migrations/' -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
+  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
   #- rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
 
 # YAML anchor for backup pattern
