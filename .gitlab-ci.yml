@@ -71,17 +71,20 @@ variables:
       if [ -d "$CLEANUP_REMOTE_PATH/infra" ] && [ -f "$CLEANUP_REMOTE_PATH/infra/$CLEANUP_COMPOSE_FILE" ]; then
         cd $CLEANUP_REMOTE_PATH/infra
         
-        # Stop only application services, keep databases running
-        sudo docker compose -f $CLEANUP_COMPOSE_FILE stop frontend message-service llm-service || true
-        sudo docker compose -f $CLEANUP_COMPOSE_FILE rm -f frontend message-service llm-service || true
-        echo "Stopped application services (frontend, message-service, llm-service)."
-        
+        # Stop application services and redis, keep postgres running
+        sudo docker compose -f $CLEANUP_COMPOSE_FILE stop frontend message-service llm-service redis || true
+        sudo docker compose -f $CLEANUP_COMPOSE_FILE rm -f frontend message-service llm-service redis || true
+        echo "Stopped application services (frontend, message-service, llm-service, redis)."
+
         # Remove old application images to free space
         sudo docker rmi spara-frontend:latest 2>/dev/null || true
         sudo docker rmi spara-message-service:latest 2>/dev/null || true
         sudo docker rmi spara-llm-service:latest 2>/dev/null || true
-        
-        echo "Database services (redis, postgres) remain untouched."
+
+        # Optionally clear redis data volume (uncomment if you want to clear redis data)
+        # sudo docker volume rm $(sudo docker volume ls -q | grep redis) 2>/dev/null || true
+
+        echo "Database service (postgres) remains untouched."
         
         # Remove only Docker image tarballs older than 7 days to free up disk space
         sudo find $CLEANUP_REMOTE_PATH -maxdepth 1 -name "*.tar" -mtime +7 -exec rm -f {} \; 2>/dev/null || true
@@ -180,12 +183,17 @@ variables:
   
   # Use rsync for efficient incremental file transfer (SOURCE_PATH allows flexibility for rollback scenarios)
   - rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}infra/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/infra/
+
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}message-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service/.env
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}llm-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service/.env
+  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}frontend/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend/.env
+
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}message-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service.tar
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}llm-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service.tar
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}frontend.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend.tar
-  - rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
+
+  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
+  #- rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
 
 # YAML anchor for backup pattern
 .backup_postgres_template: &backup_postgres
@@ -204,15 +212,32 @@ variables:
       set -euo pipefail
       echo "Creating backup directory $TARGET_BACKUP_ARCHIVE"
       mkdir -p $TARGET_BACKUP_ARCHIVE
-      echo "Creating backup $BACKUP_FILE"
-      if sudo docker exec -i $POSTGRES_CONTAINER pg_dumpall -c -U postgres > $BACKUP_FILE 2>&1; then
-        echo "Backup created successfully"
-      else
-        echo "Backup failed, contents of backup file:"
-        cat "$BACKUP_FILE"
-        exit 1
+
+      # Check if the Postgres container exists and is running
+      if sudo docker ps --format '{{.Names}}' | grep -q "^$POSTGRES_CONTAINER\$"; then
+        echo "Waiting for Postgres to be ready..."
+        for i in {1..30}; do
+          if sudo docker exec $POSTGRES_CONTAINER pg_isready -U postgres; then
+            echo "Postgres is ready"
+            break
+          fi
+          echo "Waiting for Postgres... (\$i/30)"
+          sleep 5
+          if [ \$i -eq 30 ]; then
+            echo "Postgres did not become ready in time"
+            exit 1
+          fi
+        done
+        echo "Creating backup $BACKUP_FILE"
+        if sudo docker exec -i $POSTGRES_CONTAINER pg_dumpall -c -U postgres > $BACKUP_FILE 2>&1; then
+          echo "Backup created successfully"
+        else
+          echo "Backup failed, contents of backup file:"
+          cat "$BACKUP_FILE"
+          exit 1
+        fi
+        ls -la "$BACKUP_FILE"
       fi
-      ls -la "$BACKUP_FILE"
     EOF
 
   # Keep only the last 10 tagged backups
@@ -235,7 +260,8 @@ variables:
 .deploy_with_retry_template: &deploy_with_retry
   - echo "Starting deployment with retry logic..."
   - |
-    for attempt in 1 2 3; do
+    SLEEPTIME_ONE=4
+    for attempt in 1 2 3 4 5; do
       echo "Deployment attempt $attempt..."
 
       if $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE up -d --no-deps"; then
@@ -243,15 +269,32 @@ variables:
         break
       else
         echo "Attempt $attempt failed"
-        SLEEPTIME=2
         if [ $attempt -lt 5 ]; then
-          echo "Cleaning up and waiting $SLEEPTIME seconds before retry..."
+          echo "Cleaning up and waiting $SLEEPTIME_ONE seconds before retry..."
           $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE stop frontend message-service llm-service || true"
           $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE rm -f frontend message-service llm-service || true"
-          sleep $SLEEPTIME
-          SLEEPTIME=$((SLEEPTIME * 2))
+          sleep $SLEEPTIME_ONE
+          SLEEPTIME_ONE=$((SLEEPTIME_ONE * 2))
         else
           echo "All deployment attempts failed"
+          exit 1
+        fi
+      fi
+    done
+
+    SLEEPTIME_TWO=4
+    for attempt in 1 2 3 4 5; do
+      echo "Starting migration service on attempt $attempt..."
+      if $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE up -d migration_service"; then
+        echo "Migration service started successfully"
+        break
+      else
+        echo "Attempt $attempt failed to start migration service"
+        if [ $attempt -lt 5 ]; then
+          # Do nothing...
+          :
+        else
+          echo "All attempts to start migration service failed"
           exit 1
         fi
       fi
@@ -380,6 +423,16 @@ prepare_environment:
     - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
     - echo "$LLM_SERVICE_ENV"     > llm-service/.env
 
+    # Generate deployment tag that will be used throughout the pipeline
+    - DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - echo "DEPLOYMENT_TAG=$DEPLOYMENT_TAG" > deployment_info.env
+    
+    # Inject deployment info into frontend environment
+    - echo "VITE_DEPLOYMENT_TAG=$DEPLOYMENT_TAG" >> frontend/.env
+    - echo "VITE_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> frontend/.env
+    - echo "VITE_COMMIT_SHA=${CI_COMMIT_SHA}" >> frontend/.env
+    - echo "VITE_BRANCH=${CI_COMMIT_REF_NAME}" >> frontend/.env
+
     # Final debugging
     - ls
 
@@ -397,12 +450,11 @@ prepare_environment:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Build Images
+# Build jobs
 #
-# Here we build the Docker images for the services, using the Docker Compose file,
-# and save them as tar files for later use (to speed up deployment). The tar-files
-# are sent as artifacts.
-build_images:
+# We have multiple build jobs, one for each service, to
+# make use of parallelism.
+build_frontend:
   stage: prepare
   image: docker:24.0-cli
   interruptible: true
@@ -417,29 +469,91 @@ build_images:
     # Set strict error handling
     - set -euo pipefail
 
-    # Generate deployment tag that will be used throughout the pipeline
-    - DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "DEPLOYMENT_TAG=$DEPLOYMENT_TAG" > deployment_info.env
-    
-    # Inject deployment info into frontend environment
-    - echo "VITE_DEPLOYMENT_TAG=$DEPLOYMENT_TAG" >> frontend/.env
-    - echo "VITE_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> frontend/.env
-    - echo "VITE_COMMIT_SHA=${CI_COMMIT_SHA}" >> frontend/.env
-    - echo "VITE_BRANCH=${CI_COMMIT_REF_NAME}" >> frontend/.env
-    
-    # Build Docker images without using cached layers
-    # to ensure we always have the latest code.
-    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache
+    # Build the frontend image
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache frontend
 
-    # Save Docker images as tar files
-    - docker save -o message-service.tar message-service:test
-    - docker save -o llm-service.tar llm-service:test
+    # Save the Docker image as a tar file
     - docker save -o frontend.tar frontend:test
+
+  artifacts:
+    paths:
+      - frontend.tar
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+build_message_service:
+  stage: prepare
+  image: docker:24.0-cli
+  interruptible: true
+  needs: 
+    - prepare_environment
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  script:
+    # Set strict error handling
+    - set -euo pipefail
+
+    # Build the message-service image
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache message-service
+
+    # Save the Docker image as a tar file
+    - docker save -o message-service.tar message-service:test
+
   artifacts:
     paths:
       - message-service.tar
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+build_llm_service:
+  stage: prepare
+  image: docker:24.0-cli
+  interruptible: true
+  needs:  
+    - prepare_environment
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  script:
+    # Set strict error handling
+    - set -euo pipefail
+    # Build the llm-service image
+    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache llm-service
+    # Save the Docker image as a tar file
+    - docker save -o llm-service.tar llm-service:test
+
+  artifacts:
+    paths:
       - llm-service.tar
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+combine_build_images:
+  stage: prepare
+  image: docker:24.0-cli
+  interruptible: true
+  needs: 
+    - prepare_environment
+    - build_frontend
+    - build_message_service
+    - build_llm_service
+  script:
+    # This job simply combines the built images into a single job
+    # so that they can be used in the test job.
+    # It is not strictly necessary, but it makes the pipeline cleaner.
+    - set -euo pipefail
+    - echo "Combining built jobs into a single job"
+  artifacts:
+    paths:
       - frontend.tar
+      - message-service.tar
+      - llm-service.tar
     reports:
       dotenv: deployment_info.env
     expire_in: 1 day
@@ -456,7 +570,7 @@ test_all_services:
   image: docker:24.0-cli
   interruptible: true
   needs:
-    - build_images
+    - combine_build_images
     - prepare_environment
   services:
     - docker:dind
@@ -515,7 +629,7 @@ test_all_services:
 # Only runs after tests pass successfully on GitLab servers.
 deploy_and_validate_remote_staging:
   needs:
-    - build_images
+    - combine_build_images
     - prepare_environment
     - test_all_services  # Wait for tests to pass before deploying
   stage: deploy_staging
@@ -556,7 +670,7 @@ deploy_and_validate_remote_staging:
     # Run database migrations
     - echo "Running database migrations..."
     - export COMPOSE_FILE="$COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI"
-    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration-service alembic upgrade head || true"
+    #- $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration_service alembic upgrade head || true"
 
     # Start the services using Docker Compose with retry logic
     - *deploy_with_retry
@@ -716,22 +830,12 @@ merge_assembly_to_main:
 
     - echo "Merging assembly tag $ASSEMBLY_TAG to main branch"
 
-    - git status
-    - git branch
-    - git remote -v
-
     # Fresh clone for merging (full depth needed for git operations)
     # Note that we clone into another directory to avoid conflicts,
     # despite not having imported any artifacts through the use of "needs".
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
     - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git merge_repo
     - cd merge_repo
-
-
-
-    - git status
-    - git branch
-    - git remote -v
     
     # Merge the assembly repo's current state/tag to main and push it.
     - git fetch origin main
@@ -756,7 +860,7 @@ merge_assembly_to_main:
 # (highlighting importance of well informed developers).
 deploy_and_validate_remote_production:
   needs:
-    - build_images
+    - combine_build_images
     - prepare_environment
     - test_all_services  # Wait for tests to pass before deploying
     - merge_assembly_to_main
@@ -765,8 +869,6 @@ deploy_and_validate_remote_production:
   resource_group: remote_production
   interruptible: false  # Don't interrupt deployment once started
   script:
-
-    - exit 0 # Exit early if this is a hotfix, to avoid deploying to production.
 
     # Set strict error handling
     - set -euo pipefail
@@ -799,7 +901,7 @@ deploy_and_validate_remote_production:
     
     # Run database migrations
     - echo "Running database migrations..."
-    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration-service alembic upgrade head || true"
+    #- $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration_service alembic upgrade head || true"
 
     # Start the services using Docker Compose with retry logic
     - COMPOSE_FILE="docker-compose.prod.yml"
@@ -819,7 +921,7 @@ deploy_and_validate_remote_production:
     - *record_success
     
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 # Rollback Production On Failure
 #
@@ -838,8 +940,6 @@ rollback_production_on_failure:
   needs:
     - deploy_and_validate_remote_production
   script:
-
-    - exit 0 # Exit early if this is a hotfix, to avoid deploying to production.
 
     # Set strict error handling
     - set -euo pipefail
@@ -977,7 +1077,7 @@ rollback_production_on_failure:
     - echo "Services should be fully operational."
     
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: on_failure
 
 
@@ -985,4 +1085,6 @@ rollback_production_on_failure:
 # This job is manually triggered to restore the last successful deployment
 # by restoring the database and deploying the last successful code version.
 # ...
+
+
 

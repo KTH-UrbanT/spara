@@ -39,18 +39,20 @@ services:
   ############################
   #  2.5) Database Migration #
   ############################
-  migration-service:
+  migration_service:
     build:
       context: ../shared/alembic
       dockerfile: Dockerfile
-    container_name: spara-alembic-dev
+    container_name: spara-alembic-test
+    networks:
+      - spara_test_network
     depends_on:
       message_store:
         condition: service_healthy
     environment:
       - ALEMBIC_DB_URL=postgresql://postgres:postgres@message_store:5432/message_store
     volumes:
-      - ../shared/alembic/migrations:/migrations
+      - ../shared/alembic/migrations:/app/migrations
     restart: "no"  # Run once and exit
 
   ############################
