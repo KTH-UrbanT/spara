@@ -377,7 +377,7 @@ before_script:
   #- echo "Testing connectivity to production host..."
   #- nc -zv $PRODUCTION_HOST 22 || echo "Cannot connect to $PRODUCTION_HOST on port 22"
 
-  - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+  #- ssh-keyscan -H github.com >> ~/.ssh/known_hosts
   # Add timeout and error handling for host key scanning
   #- timeout 30 ssh-keyscan -H $STAGING_HOST >> ~/.ssh/known_hosts || echo "Failed to get host keys for $STAGING_HOST"
   #- timeout 30 ssh-keyscan -H $PRODUCTION_HOST >> ~/.ssh/known_hosts || echo "Failed to get host keys for $PRODUCTION_HOST"
@@ -881,6 +881,9 @@ deploy_and_validate_remote_production:
     - echo "Cleaning up production server before deployment (preserving databases)"
     #- export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
     - export SSH_CMD="sshpass -p \"$PRODUCTION_PASSWORD\" ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
+    
+    - sshpass -p "$PRODUCTION_PASSWORD" ssh -i ~/.ssh/production_remote_key $PRODUCTION_USERNAME@$PRODUCTION_HOST
+    
     - *cleanup_production_script
 
     # Step 2: Backup Postgres
