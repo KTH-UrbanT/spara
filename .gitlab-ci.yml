@@ -872,11 +872,15 @@ deploy_and_validate_remote_production:
 
     # Set strict error handling
     - set -euo pipefail
+
+    # Install sshpass for non-interactive SSH password handling
+    - apk add --no-cache sshpass
     
     # Step 1: Production Cleanup
     - echo "=== PRODUCTION CLEANUP PHASE ==="
     - echo "Cleaning up production server before deployment (preserving databases)"
-    - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
+    #- export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
+    - export SSH_CMD="sshpass -p \"$PRODUCTION_PASSWORD\" ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
     - *cleanup_production_script
 
     # Step 2: Backup Postgres
