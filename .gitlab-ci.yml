@@ -180,6 +180,8 @@ variables:
   - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "sudo mkdir -p $(dirname $TARGET_REMOTE_PATH)"
   - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "sudo mkdir -p $TARGET_REMOTE_PATH/message-service $TARGET_REMOTE_PATH/llm-service $TARGET_REMOTE_PATH/frontend"
 
+  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "sudo chown -R $TARGET_USERNAME:$TARGET_USERNAME $TARGET_REMOTE_PATH"
+
   # Install rsync if not already installed
   - |
     if ! command -v rsync >/dev/null 2>&1; then
