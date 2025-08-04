@@ -63,6 +63,7 @@ variables:
 # Takes parameters: CLEANUP_HOST, CLEANUP_USERNAME, CLEANUP_REMOTE_PATH, CLEANUP_COMPOSE_FILE
 # We use these parameters to customize the cleanup process for each environment.
 .cleanup_script_template: &cleanup_script
+  - echo "SSH_CMD=$SSH_CMD"
   - echo "CLEANUP_USERNAME=$CLEANUP_USERNAME"
   - echo "CLEANUP_HOST=$CLEANUP_HOST"
   - echo "CLEANUP_REMOTE_PATH=$CLEANUP_REMOTE_PATH"
