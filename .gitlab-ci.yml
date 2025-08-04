@@ -41,7 +41,6 @@ variables:
   PRODUCTION_HOST:            $SSH_PRODUCTION_HOST
   PRODUCTION_USERNAME:        $SSH_PRODUCTION_USERNAME
   PRODUCTION_KEY:             $SSH_PRODUCTION_KEY
-  PRODUCTION_PASSWORD:        $SSH_PRODUCTION_PASSWORD
   PRODUCTION_REMOTE_PATH:     /srv/odenlabs/spara
 
   SSH_GITHUB_PRIVATE_KEY:     $SSH_GITHUB_KEY
@@ -766,34 +765,50 @@ tag_and_merge:
     # Export the assembly tag for the manual merge job (manual trigger).
     - echo "ASSEMBLY_TAG=$ASSEMBLY_TAG" > ../assembly_tag.env
 
-    # Clean up old tags (keep only last 10 tags for each component)
+    # Clean up old tags (keep only last 10 tags for each component and pattern)
     - echo "=== CLEANING UP OLD TAGS ==="
     - |
       for name in message-service llm-service frontend; do
         echo "Cleaning up old tags for $name..."
         cd "$name"
-        # Get all passed_test tags sorted by creation date (newest first)
-        TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
-        if [ -n "$TAGS_TO_DELETE" ]; then
-          echo "Deleting old tags for $name $TAGS_TO_DELETE"
-          for tag in $TAGS_TO_DELETE; do
+        
+        # Clean up passed_test-* tags (keep last 10)
+        PASSED_TEST_TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
+        if [ -n "$PASSED_TEST_TAGS_TO_DELETE" ]; then
+          echo "Deleting old passed_test-* tags for $name: $PASSED_TEST_TAGS_TO_DELETE"
+          for tag in $PASSED_TEST_TAGS_TO_DELETE; do
             git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
           done
         else
-          echo "No old tags to delete for $name"
+          echo "No old passed_test-* tags to delete for $name"
         fi
+        
         cd ..
       done
+      
       # Clean up assembly repo tags as well
       echo "Cleaning up old assembly tags..."
-      ASSEMBLY_TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
-      if [ -n "$ASSEMBLY_TAGS_TO_DELETE" ]; then
-        echo "Deleting old assembly tags $ASSEMBLY_TAGS_TO_DELETE"
-        for tag in $ASSEMBLY_TAGS_TO_DELETE; do
+      
+      # Clean up passed_test-* assembly tags (keep last 10)
+      ASSEMBLY_PASSED_TEST_TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
+      if [ -n "$ASSEMBLY_PASSED_TEST_TAGS_TO_DELETE" ]; then
+        echo "Deleting old passed_test-* assembly tags: $ASSEMBLY_PASSED_TEST_TAGS_TO_DELETE"
+        for tag in $ASSEMBLY_PASSED_TEST_TAGS_TO_DELETE; do
           git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
         done
       else
-        echo "No old assembly tags to delete"
+        echo "No old passed_test-* assembly tags to delete"
+      fi
+      
+      # Clean up release-* assembly tags (keep last 10)
+      ASSEMBLY_RELEASE_TAGS_TO_DELETE=$(git tag -l "release-*" --sort=-creatordate | tail -n +11)
+      if [ -n "$ASSEMBLY_RELEASE_TAGS_TO_DELETE" ]; then
+        echo "Deleting old release-* assembly tags: $ASSEMBLY_RELEASE_TAGS_TO_DELETE"
+        for tag in $ASSEMBLY_RELEASE_TAGS_TO_DELETE; do
+          git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
+        done
+      else
+        echo "No old release-* assembly tags to delete"
       fi
 
   artifacts:
