@@ -63,9 +63,14 @@ variables:
 # Takes parameters: CLEANUP_HOST, CLEANUP_USERNAME, CLEANUP_REMOTE_PATH, CLEANUP_COMPOSE_FILE
 # We use these parameters to customize the cleanup process for each environment.
 .cleanup_script_template: &cleanup_script
+  - echo "CLEANUP_USERNAME=$CLEANUP_USERNAME"
+  - echo "CLEANUP_HOST=$CLEANUP_HOST"
+  - echo "CLEANUP_REMOTE_PATH=$CLEANUP_REMOTE_PATH"
+  - echo "CLEANUP_COMPOSE_FILE=$CLEANUP_COMPOSE_FILE"
   - |
     $SSH_CMD $CLEANUP_USERNAME@$CLEANUP_HOST <<EOF
-      set -euo pipefail
+      set -euxo pipefail
+      #set -euo pipefail
 
       echo "Stopping application services only (preserving databases)..."
       if [ -d "$CLEANUP_REMOTE_PATH/infra" ] && [ -f "$CLEANUP_REMOTE_PATH/infra/$CLEANUP_COMPOSE_FILE" ]; then
