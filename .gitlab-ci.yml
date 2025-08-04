@@ -610,8 +610,7 @@ build_frontend_prod:
     # Build the production frontend image with production URLs
     - docker compose -f infra/$COMPOSE_FILE_PROD build --pull --no-cache frontend
 
-    # Tag the image for production and save as tar
-    - docker tag spara-frontend:latest frontend:prod
+    # Save image as tar
     - docker save -o frontend-prod.tar frontend:prod
 
   artifacts:
@@ -640,8 +639,7 @@ build_message_service_prod:
     # Build the production message-service image
     - docker compose -f infra/$COMPOSE_FILE_PROD build --pull --no-cache message-service
 
-    # Tag the image for production and save as tar
-    - docker tag spara-message-service:latest message-service:prod
+    # Tag the image as tar
     - docker save -o message-service-prod.tar message-service:prod
 
   artifacts:
@@ -670,8 +668,7 @@ build_llm_service_prod:
     # Build the production llm-service image
     - docker compose -f infra/$COMPOSE_FILE_PROD build --pull --no-cache llm-service
     
-    # Tag the image for production and save as tar
-    - docker tag spara-llm-service:latest llm-service:prod
+    # Tag the image as tar
     - docker save -o llm-service-prod.tar llm-service:prod
 
   artifacts:
@@ -705,7 +702,6 @@ combine_build_images_prod:
       - frontend-prod.tar
       - message-service-prod.tar
       - llm-service-prod.tar
-      - migration-service-prod.tar
     reports:
       dotenv: deployment_info.env
     expire_in: 1 day
