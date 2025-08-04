@@ -265,9 +265,9 @@ variables:
     $SSH_CMD $TARGET_USERNAME@$TARGET_HOST <<EOF
       set -euo pipefail
       cd $TARGET_REMOTE_PATH
-      sudo docker load -i message-service.tar
-      sudo docker load -i llm-service.tar
-      sudo docker load -i frontend.tar
+      sudo docker load -i message-service-test.tar
+      sudo docker load -i llm-service-test.tar
+      sudo docker load -i frontend-test.tar
     EOF
 
 # YAML anchor for loading production Docker images
@@ -503,11 +503,11 @@ build_frontend:
     - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache frontend
 
     # Save the Docker image as a tar file
-    - docker save -o frontend.tar frontend:test
+    - docker save -o frontend-test.tar frontend:test
 
   artifacts:
     paths:
-      - frontend.tar
+      - frontend-test.tar
     expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -530,11 +530,11 @@ build_message_service:
     - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache message-service
 
     # Save the Docker image as a tar file
-    - docker save -o message-service.tar message-service:test
+    - docker save -o message-service-test.tar message-service:test
 
   artifacts:
     paths:
-      - message-service.tar
+      - message-service-test.tar
     expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -555,11 +555,11 @@ build_llm_service:
     # Build the llm-service image
     - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache llm-service
     # Save the Docker image as a tar file
-    - docker save -o llm-service.tar llm-service:test
+    - docker save -o llm-service-test.tar llm-service:test
 
   artifacts:
     paths:
-      - llm-service.tar
+      - llm-service-test.tar
     expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -581,9 +581,9 @@ combine_build_images:
     - echo "Combining built jobs into a single job"
   artifacts:
     paths:
-      - frontend.tar
-      - message-service.tar
-      - llm-service.tar
+      - frontend-test.tar
+      - message-service-test.tar
+      - llm-service-test.tar
     reports:
       dotenv: deployment_info.env
     expire_in: 1 day
@@ -736,10 +736,10 @@ test_all_services:
     - set -euo pipefail
 
     # Load all Docker images
-    - docker load -i message-service.tar
-    - docker load -i llm-service.tar
-    - docker load -i frontend.tar
-    
+    - docker load -i message-service-test.tar
+    - docker load -i llm-service-test.tar
+    - docker load -i frontend-test.tar
+
     # Start dependencies first (redis and postgres)
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d redis message_store
     
@@ -1209,9 +1209,9 @@ rollback_production_on_failure:
     - docker compose -f infra/docker-compose.prod.yml build --no-cache
     
     # Save images as tar files (using standard names for reusability)
-    - docker save -o message-service.tar spara-message-service:latest
-    - docker save -o llm-service.tar spara-llm-service:latest  
-    - docker save -o frontend.tar spara-frontend:latest
+    - docker save -o message-service-prod.tar spara-message-service:latest
+    - docker save -o llm-service-prod.tar spara-llm-service:latest
+    - docker save -o frontend-prod.tar spara-frontend:latest
     - cd ..
     
     # Upload rollback images to production server (reusing standard anchor)
