@@ -882,7 +882,8 @@ deploy_and_validate_remote_production:
     - echo "=== PRODUCTION CLEANUP PHASE ==="
     - echo "Cleaning up production server before deployment (preserving databases)"
     #- export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
-    - export SSH_CMD="sshpass -p \"$PRODUCTION_PASSWORD\" ssh -o StrictHostKeyChecking=no"
+    #- export SSH_CMD="sshpass -p \"$PRODUCTION_PASSWORD\" ssh -o StrictHostKeyChecking=no"
+    - export SSH_CMD="sshpass -p '$PRODUCTION_PASSWORD' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no" # ???
     
     #- sshpass -p "$PRODUCTION_PASSWORD" ssh -i ~/.ssh/production_remote_key $PRODUCTION_USERNAME@$PRODUCTION_HOST
     
