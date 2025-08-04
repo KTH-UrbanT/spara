@@ -749,38 +749,10 @@ test_all_services:
     - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
     
     # Test llm-service (depends on redis)
-    #- echo "Testing llm-service..."
-    #- docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
-    #- docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
-    
-    # Test llm-service (depends on redis)
     - echo "Testing llm-service..."
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
+    - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
     
-    # Add debugging to check container status and logs
-    - echo "Checking llm-service container status..."
-    - docker compose -f infra/$COMPOSE_FILE_TEST ps llm-service
-    - echo "Checking llm-service logs..."
-    - docker compose -f infra/$COMPOSE_FILE_TEST logs llm-service
-    
-    # Wait for service to potentially start
-    - echo "Waiting 10 seconds for llm-service to start..."
-    - sleep 10
-    - docker compose -f infra/$COMPOSE_FILE_TEST ps llm-service
-    
-    # Check if container is running before executing tests
-    - |
-      if docker compose -f infra/$COMPOSE_FILE_TEST ps llm-service | grep -q "Up"; then
-        echo "LLM service is running, executing tests..."
-        docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
-      else
-        echo "LLM service container is not running. Container logs:"
-        docker compose -f infra/$COMPOSE_FILE_TEST logs llm-service
-        echo "Container inspection:"
-        docker inspect $(docker compose -f infra/$COMPOSE_FILE_TEST ps -q llm-service) || echo "Container not found"
-        exit 1
-      fi
-
     # Test frontend (depends on message-service)
     - echo "Testing frontend..."
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d frontend
