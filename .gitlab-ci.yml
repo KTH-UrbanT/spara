@@ -778,7 +778,6 @@ tag_and_merge:
           echo "Deleting old tags for $name $TAGS_TO_DELETE"
           for tag in $TAGS_TO_DELETE; do
             git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
-            git push gitlab --delete "$tag" || echo "Failed to delete tag $tag on GitLab (may not exist on remote)"
           done
         else
           echo "No old tags to delete for $name"
@@ -792,7 +791,6 @@ tag_and_merge:
         echo "Deleting old assembly tags $ASSEMBLY_TAGS_TO_DELETE"
         for tag in $ASSEMBLY_TAGS_TO_DELETE; do
           git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
-          git push gitlab --delete "$tag" || echo "Failed to delete tag $tag on GitLab (may not exist on remote)"
         done
       else
         echo "No old assembly tags to delete"
