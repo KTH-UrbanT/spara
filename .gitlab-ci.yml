@@ -596,6 +596,7 @@ build_frontend_prod:
   image: docker:24.0-cli
   interruptible: true
   needs: 
+    - merge_assembly_to_main
     - prepare_environment
   services:
     - docker:dind
@@ -625,6 +626,7 @@ build_message_service_prod:
   image: docker:24.0-cli
   interruptible: true
   needs: 
+    - merge_assembly_to_main
     - prepare_environment
   services:
     - docker:dind
@@ -654,6 +656,7 @@ build_llm_service_prod:
   image: docker:24.0-cli
   interruptible: true
   needs:  
+    - merge_assembly_to_main
     - prepare_environment
   services:
     - docker:dind
@@ -677,29 +680,6 @@ build_llm_service_prod:
     expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-build_migration_service_prod:
-  stage: deploy_production
-  image: docker:24.0-cli
-  interruptible: true
-  needs:  
-    - prepare_environment
-  services:
-    - docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
-    # Set strict error handling
-    - set -euo pipefail
-    
-    # Build the production migration service image
-    - docker compose -f infra/$COMPOSE_FILE_PROD build --pull --no-cache migration_service
-    
-    # Tag the image for production and save as tar
-    - docker tag spara-alembic-prod:latest migration_service:prod
-    - docker save -o migration-service-prod.tar migration_service:prod
-
   artifacts:
     paths:
       - migration-service-prod.tar
@@ -716,7 +696,6 @@ combine_build_images_prod:
     - build_frontend_prod
     - build_message_service_prod
     - build_llm_service_prod
-    - build_migration_service_prod
   script:
     # This job combines the production built images into a single job
     - set -euo pipefail
