@@ -190,8 +190,6 @@ variables:
   # Use rsync for efficient incremental file transfer (SOURCE_PATH allows flexibility for rollback scenarios)
   - rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}infra/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/infra/
 
-  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}message-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service/.env
-  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}llm-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service/.env
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}frontend/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend/.env
 
   - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}message-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service.tar
@@ -424,20 +422,18 @@ prepare_environment:
     - git submodule status > submodule_shas.env
     - cat submodule_shas.env
 
-    # Inject content into .env files.
-    # WARNING: These are a typical source of error.
-    - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
-    - echo "$LLM_SERVICE_ENV"     > llm-service/.env
-
     # Generate deployment tag that will be used throughout the pipeline
     - DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
     - echo "DEPLOYMENT_TAG=$DEPLOYMENT_TAG" > deployment_info.env
     
     # Inject deployment info into frontend environment
+    - if [ ! -f frontend/.env ]; then touch frontend/.env; fi
     - echo "VITE_DEPLOYMENT_TAG=$DEPLOYMENT_TAG" >> frontend/.env
     - echo "VITE_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> frontend/.env
     - echo "VITE_COMMIT_SHA=${CI_COMMIT_SHA}" >> frontend/.env
     - echo "VITE_BRANCH=${CI_COMMIT_REF_NAME}" >> frontend/.env
+
+    - cat frontend/.env
 
     # Final debugging
     - ls
@@ -1043,10 +1039,6 @@ rollback_production_on_failure:
     
     - git checkout "$ASSEMBLY_TAG"
     - git submodule update --recursive
-    
-    # Inject .env files (they should be the same)
-    - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
-    - echo "$LLM_SERVICE_ENV" > llm-service/.env
     
     # Build the Docker images for rollback
     - echo "Building Docker images for rollback..."
