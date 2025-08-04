@@ -177,8 +177,8 @@ variables:
 .copy_files_template: &copy_files
   - echo "Copying files to remote server (clean deployment)"
   - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "find $TARGET_REMOTE_PATH -mindepth 1 -maxdepth 1 ! -name cicd -exec sudo rm -rf {} +"
-  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "mkdir -p $(dirname $TARGET_REMOTE_PATH)"
-  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "mkdir -p $TARGET_REMOTE_PATH/message-service $TARGET_REMOTE_PATH/llm-service $TARGET_REMOTE_PATH/frontend"
+  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "sudo mkdir -p $(dirname $TARGET_REMOTE_PATH)"
+  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "sudo mkdir -p $TARGET_REMOTE_PATH/message-service $TARGET_REMOTE_PATH/llm-service $TARGET_REMOTE_PATH/frontend"
 
   # Install rsync if not already installed
   - |
