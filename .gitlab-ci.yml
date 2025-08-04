@@ -188,18 +188,19 @@ variables:
     fi
   
   # Use rsync for efficient incremental file transfer (SOURCE_PATH allows flexibility for rollback scenarios)
-  - rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}infra/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/infra/
+  # TODO: MAKE USE OF SSH_CMD!!!
+  - rsync -az --delete -e "$SSH_CMD" ${SOURCE_PATH:-}infra/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/infra/
 
-  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}message-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service/.env
-  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}llm-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service/.env
-  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}frontend/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend/.env
+  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}message-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service/.env
+  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}llm-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service/.env
+  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}frontend/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend/.env
 
-  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}message-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service.tar
-  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}llm-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service.tar
-  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}frontend.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend.tar
+  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}message-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service.tar
+  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}llm-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service.tar
+  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}frontend.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend.tar
 
-  - rsync -az -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
-  #- rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
+  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
+  #- rsync -az --delete -e "$SSH_CMD" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
 
 # YAML anchor for backup pattern
 .backup_postgres_template: &backup_postgres
@@ -879,17 +880,11 @@ deploy_and_validate_remote_production:
 
     # Set strict error handling
     - set -euo pipefail
-
-    # Install sshpass for non-interactive SSH password handling
-    - apk add --no-cache sshpass
     
     # Step 1: Production Cleanup
     - echo "=== PRODUCTION CLEANUP PHASE ==="
     - echo "Cleaning up production server before deployment (preserving databases)"
-    #- export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
-    #- export SSH_CMD="sshpass -p \"$PRODUCTION_PASSWORD\" ssh -o StrictHostKeyChecking=no"
-    #- sshpass -p "$PRODUCTION_PASSWORD" ssh -i ~/.ssh/production_remote_key $PRODUCTION_USERNAME@$PRODUCTION_HOST
-    - export SSH_CMD="sshpass -p '$PRODUCTION_PASSWORD' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no" # ???
+    - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
     
     - *cleanup_production_script
 
