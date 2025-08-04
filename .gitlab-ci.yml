@@ -63,6 +63,7 @@ variables:
 # Takes parameters: CLEANUP_HOST, CLEANUP_USERNAME, CLEANUP_REMOTE_PATH, CLEANUP_COMPOSE_FILE
 # We use these parameters to customize the cleanup process for each environment.
 .cleanup_script_template: &cleanup_script
+  - echo "SSH_CMD=$SSH_CMD"
   - echo "CLEANUP_USERNAME=$CLEANUP_USERNAME"
   - echo "CLEANUP_HOST=$CLEANUP_HOST"
   - echo "CLEANUP_REMOTE_PATH=$CLEANUP_REMOTE_PATH"
@@ -98,18 +99,18 @@ variables:
       fi
 
       # Check disk usage and perform cleanup if necessary
-      USAGE=$(df / | awk 'NR==2 {print $5}' | tr -d '%')
-      if [ "$USAGE" -gt 75 ]; then
+      USAGE=\$(df / | awk 'NR==2 {print \$5}' | tr -d '%')
+      if [ "\$USAGE" -gt 75 ]; then
 
         echo "Disk usage before cleanup"
         df -h /
 
         echo "Safe Docker cleanup..."
         # Remove stopped containers (but not database containers)
-        sudo docker rm $(sudo docker ps -aq -f status=exited) 2>/dev/null || true
+        sudo docker rm \$(sudo docker ps -aq -f status=exited) 2>/dev/null || true
 
         # Remove dangling (untagged) images only
-        sudo docker rmi $(sudo docker images -f dangling=true -q) 2>/dev/null || true
+        sudo docker rmi \$(sudo docker images -f dangling=true -q) 2>/dev/null || true
 
         # Clean up /tmp and old logs (conservative approach)
         find /tmp -mtime +7 -and -not -exec fuser -s {} ';' -exec rm -rf {} + 2>/dev/null || true
@@ -118,8 +119,8 @@ variables:
         echo "Disk usage after cleanup:"
         df -h /
 
-        USAGE=$(df / | awk 'NR==2 {print $5}' | tr -d '%')
-        if [ "$USAGE" -gt 90 ]; then
+        USAGE=\$(df / | awk 'NR==2 {print \$5}' | tr -d '%')
+        if [ "\$USAGE" -gt 90 ]; then
           echo "WARNING: Root filesystem is over 90% full. Manual intervention may be needed."
           echo "Database volumes and data have been preserved."
         fi
