@@ -196,9 +196,15 @@ variables:
   - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}llm-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service/.env
   - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}frontend/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend/.env
 
-  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}message-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service.tar
-  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}llm-service.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service.tar
-  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}frontend.tar $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend.tar
+  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}message-service${TAR_SUFFIX:-.tar} $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service${TAR_SUFFIX:-.tar}
+  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}llm-service${TAR_SUFFIX:-.tar} $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service${TAR_SUFFIX:-.tar}
+  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}frontend${TAR_SUFFIX:-.tar} $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend${TAR_SUFFIX:-.tar}
+  
+  # Copy migration service tar if it exists (for production deployments)
+  - |
+    if [ -f "${SOURCE_PATH:-}migration-service${TAR_SUFFIX:-.tar}" ]; then
+      rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}migration-service${TAR_SUFFIX:-.tar} $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/migration-service${TAR_SUFFIX:-.tar}
+    fi
 
   - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
   #- rsync -az --delete -e "$SSH_CMD" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
@@ -259,16 +265,31 @@ variables:
     $SSH_CMD $TARGET_USERNAME@$TARGET_HOST <<EOF
       set -euo pipefail
       cd $TARGET_REMOTE_PATH
-      sudo docker load -i message-service.tar
-      sudo docker load -i llm-service.tar
-      sudo docker load -i frontend.tar
+      sudo docker load -i message-service-test.tar
+      sudo docker load -i llm-service-test.tar
+      sudo docker load -i frontend-test.tar
+    EOF
+
+# YAML anchor for loading production Docker images
+.load_images_prod_template: &load_images_prod
+  - echo "Loading production Docker images..."
+  - |
+    $SSH_CMD $TARGET_USERNAME@$TARGET_HOST <<EOF
+      set -euo pipefail
+      cd $TARGET_REMOTE_PATH
+      sudo docker load -i message-service-prod.tar
+      sudo docker load -i llm-service-prod.tar
+      sudo docker load -i frontend-prod.tar
+      if [ -f migration-service-prod.tar ]; then
+        sudo docker load -i migration-service-prod.tar
+      fi
     EOF
 
 # YAML anchor for deploy with retry pattern
 .deploy_with_retry_template: &deploy_with_retry
   - echo "Starting deployment with retry logic..."
   - |
-    SLEEPTIME_ONE=4
+    SLEEPTIME_ONE=8
     for attempt in 1 2 3 4 5; do
       echo "Deployment attempt $attempt..."
 
@@ -482,11 +503,11 @@ build_frontend:
     - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache frontend
 
     # Save the Docker image as a tar file
-    - docker save -o frontend.tar frontend:test
+    - docker save -o frontend-test.tar frontend:test
 
   artifacts:
     paths:
-      - frontend.tar
+      - frontend-test.tar
     expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -509,11 +530,11 @@ build_message_service:
     - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache message-service
 
     # Save the Docker image as a tar file
-    - docker save -o message-service.tar message-service:test
+    - docker save -o message-service-test.tar message-service:test
 
   artifacts:
     paths:
-      - message-service.tar
+      - message-service-test.tar
     expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -534,11 +555,11 @@ build_llm_service:
     # Build the llm-service image
     - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache llm-service
     # Save the Docker image as a tar file
-    - docker save -o llm-service.tar llm-service:test
+    - docker save -o llm-service-test.tar llm-service:test
 
   artifacts:
     paths:
-      - llm-service.tar
+      - llm-service-test.tar
     expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -560,9 +581,131 @@ combine_build_images:
     - echo "Combining built jobs into a single job"
   artifacts:
     paths:
-      - frontend.tar
-      - message-service.tar
-      - llm-service.tar
+      - frontend-test.tar
+      - message-service-test.tar
+      - llm-service-test.tar
+    reports:
+      dotenv: deployment_info.env
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+# Build jobs for production with different configurations
+build_frontend_prod:
+  stage: deploy_production
+  image: docker:24.0-cli
+  interruptible: true
+  needs: 
+    - merge_assembly_to_main
+    - prepare_environment
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  script:
+    # Set strict error handling
+    - set -euo pipefail
+
+    # Build the production frontend image with production URLs
+    - docker compose -f infra/$COMPOSE_FILE_PROD build --pull --no-cache frontend
+
+    # Tag the image for production and save as tar
+    - docker tag spara-frontend:latest frontend:prod
+    - docker save -o frontend-prod.tar frontend:prod
+
+  artifacts:
+    paths:
+      - frontend-prod.tar
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+build_message_service_prod:
+  stage: deploy_production
+  image: docker:24.0-cli
+  interruptible: true
+  needs: 
+    - merge_assembly_to_main
+    - prepare_environment
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  script:
+    # Set strict error handling
+    - set -euo pipefail
+
+    # Build the production message-service image
+    - docker compose -f infra/$COMPOSE_FILE_PROD build --pull --no-cache message-service
+
+    # Tag the image for production and save as tar
+    - docker tag spara-message-service:latest message-service:prod
+    - docker save -o message-service-prod.tar message-service:prod
+
+  artifacts:
+    paths:
+      - message-service-prod.tar
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+build_llm_service_prod:
+  stage: deploy_production
+  image: docker:24.0-cli
+  interruptible: true
+  needs:  
+    - merge_assembly_to_main
+    - prepare_environment
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  script:
+    # Set strict error handling
+    - set -euo pipefail
+    
+    # Build the production llm-service image
+    - docker compose -f infra/$COMPOSE_FILE_PROD build --pull --no-cache llm-service
+    
+    # Tag the image for production and save as tar
+    - docker tag spara-llm-service:latest llm-service:prod
+    - docker save -o llm-service-prod.tar llm-service:prod
+
+  artifacts:
+    paths:
+      - llm-service-prod.tar
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+  artifacts:
+    paths:
+      - migration-service-prod.tar
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+combine_build_images_prod:
+  stage: deploy_production
+  image: docker:24.0-cli
+  interruptible: true
+  needs: 
+    - prepare_environment
+    - build_frontend_prod
+    - build_message_service_prod
+    - build_llm_service_prod
+  script:
+    # This job combines the production built images into a single job
+    - set -euo pipefail
+    - echo "Combining production built jobs into a single job"
+  artifacts:
+    paths:
+      - frontend-prod.tar
+      - message-service-prod.tar
+      - llm-service-prod.tar
+      - migration-service-prod.tar
     reports:
       dotenv: deployment_info.env
     expire_in: 1 day
@@ -593,10 +736,10 @@ test_all_services:
     - set -euo pipefail
 
     # Load all Docker images
-    - docker load -i message-service.tar
-    - docker load -i llm-service.tar
-    - docker load -i frontend.tar
-    
+    - docker load -i message-service-test.tar
+    - docker load -i llm-service-test.tar
+    - docker load -i frontend-test.tar
+
     # Start dependencies first (redis and postgres)
     - docker compose -f infra/$COMPOSE_FILE_TEST up -d redis message_store
     
@@ -668,6 +811,7 @@ deploy_and_validate_remote_staging:
     # Step 3: Copy files to staging server
     - echo "=== SYNC PHASE ==="
     - SSH_KEY_PATH="~/.ssh/staging_remote_key"
+    - TAR_SUFFIX="-test.tar"
     - *copy_files
 
     # Step 4: Deploy on Staging Server
@@ -883,7 +1027,7 @@ merge_assembly_to_main:
 # (highlighting importance of well informed developers).
 deploy_and_validate_remote_production:
   needs:
-    - combine_build_images
+    - combine_build_images_prod
     - prepare_environment
     - test_all_services  # Wait for tests to pass before deploying
     - merge_assembly_to_main
@@ -915,13 +1059,14 @@ deploy_and_validate_remote_production:
     # Step 3: Copy files to production server
     - echo "=== PRODUCTION SYNC PHASE ==="
     - SSH_KEY_PATH="~/.ssh/production_remote_key"
+    - TAR_SUFFIX="-prod.tar"
     - *copy_files
 
     # Step 4: Deploy to production
     - echo "=== PRODUCTION DEPLOY PHASE ==="
     - echo "Deploying to production server"
     - *docker_install_check
-    - *load_images
+    - *load_images_prod
     
     # Run database migrations
     - echo "Running database migrations..."
@@ -1064,9 +1209,9 @@ rollback_production_on_failure:
     - docker compose -f infra/docker-compose.prod.yml build --no-cache
     
     # Save images as tar files (using standard names for reusability)
-    - docker save -o message-service.tar spara-message-service:latest
-    - docker save -o llm-service.tar spara-llm-service:latest  
-    - docker save -o frontend.tar spara-frontend:latest
+    - docker save -o message-service-prod.tar spara-message-service:latest
+    - docker save -o llm-service-prod.tar spara-llm-service:latest
+    - docker save -o frontend-prod.tar spara-frontend:latest
     - cd ..
     
     # Upload rollback images to production server (reusing standard anchor)
@@ -1075,6 +1220,7 @@ rollback_production_on_failure:
     - TARGET_REMOTE_PATH="$PRODUCTION_REMOTE_PATH"
     - SSH_KEY_PATH="~/.ssh/production_remote_key"
     - SOURCE_PATH="rollback_repo/"
+    - TAR_SUFFIX="-prod.tar"
     - *copy_files
     
     # Load rollback images on production server (reusing standard anchor)
@@ -1104,11 +1250,6 @@ rollback_production_on_failure:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: on_failure
 
-
-# Manual rollback of production to last successful deployment.
-# This job is manually triggered to restore the last successful deployment
-# by restoring the database and deploying the last successful code version.
-# ...
 
 
 

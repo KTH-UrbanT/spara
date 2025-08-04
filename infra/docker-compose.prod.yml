@@ -40,9 +40,7 @@ services:
   #  2.5) Database Migration #
   ############################
   migration_service:
-    build:
-      context: ../shared/alembic
-      dockerfile: Dockerfile
+    image: migration_service:prod
     container_name: spara-alembic-prod
     networks:
       - spara_network
@@ -59,9 +57,7 @@ services:
   #  3) Message Service      #
   ############################
   message-service:
-    build:
-      context: ../message-service
-      dockerfile: Dockerfile
+    image: message-service:prod
     container_name: spara-message-service
     restart: always
     networks:
@@ -78,9 +74,7 @@ services:
   #  4) LLM Service          #
   ############################
   llm-service:
-    build:
-      context: ../llm-service
-      dockerfile: Dockerfile
+    image: llm-service:prod
     container_name: spara-llm-service
     restart: always
     networks:
@@ -94,12 +88,7 @@ services:
   #  5) Frontend (React)     #
   ############################
   frontend:
-    build:
-      context: ../frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_MS_URL: https://sparabot.com
-        VITE_MS_SOCKETIO_URL: wss://sparabot.com
+    image: frontend:prod
     container_name: spara-frontend
     restart: always
     networks:
