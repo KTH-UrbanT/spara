@@ -434,6 +434,7 @@ prepare_environment:
     - echo "DEPLOYMENT_TAG=$DEPLOYMENT_TAG" > deployment_info.env
     
     # Inject deployment info into frontend environment
+    - if [ ! -f frontend/.env ]; then touch frontend/.env; fi
     - echo "VITE_DEPLOYMENT_TAG=$DEPLOYMENT_TAG" >> frontend/.env
     - echo "VITE_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> frontend/.env
     - echo "VITE_COMMIT_SHA=${CI_COMMIT_SHA}" >> frontend/.env
@@ -886,9 +887,9 @@ deploy_and_validate_remote_production:
     - echo "=== PRODUCTION CLEANUP PHASE ==="
     - echo "Cleaning up production server before deployment (preserving databases)"
     #- export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
-    - export SSH_CMD="sshpass -p \"$PRODUCTION_PASSWORD\" ssh -o StrictHostKeyChecking=no"
-    
+    #- export SSH_CMD="sshpass -p \"$PRODUCTION_PASSWORD\" ssh -o StrictHostKeyChecking=no"
     #- sshpass -p "$PRODUCTION_PASSWORD" ssh -i ~/.ssh/production_remote_key $PRODUCTION_USERNAME@$PRODUCTION_HOST
+    - export SSH_CMD="sshpass -p '$PRODUCTION_PASSWORD' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no" # ???
     
     - *cleanup_production_script
 
