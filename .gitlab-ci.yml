@@ -1275,6 +1275,9 @@ rollback_production_on_failure:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: on_failure
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+      when: manual
+      allow_failure: true
 
 
 
