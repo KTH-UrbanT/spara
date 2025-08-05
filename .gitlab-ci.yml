@@ -176,6 +176,17 @@ variables:
   - CLEANUP_VOLUMES="PRESERVE"
   - *cleanup_script_base
 
+# YAML anchor for rollback cleanup - sets all parameters and calls base script
+.cleanup_rollback_script_template: &cleanup_rollback_script
+  - CLEANUP_HOST="$PRODUCTION_HOST"
+  - CLEANUP_USERNAME="$PRODUCTION_USERNAME"
+  - CLEANUP_REMOTE_PATH="$PRODUCTION_REMOTE_PATH" 
+  - CLEANUP_COMPOSE_FILE="$COMPOSE_FILE_PROD"
+  - CLEANUP_ENVIRONMENT="Production"
+  - CLEANUP_SERVICES="ALL"
+  - CLEANUP_VOLUMES="ALL"
+  - *cleanup_script_base
+
 # YAML anchor for Docker installation check pattern
 .docker_install_check_template: &docker_install_check
   - |
@@ -425,8 +436,8 @@ variables:
   
   # Stop current failed services using the standard cleanup script
   - echo "=== STOPPING FAILED SERVICES ==="
-  - echo "Using production cleanup script to stop failed services"
-  - *cleanup_production_script
+  - echo "Using rollback cleanup script to stop failed services"
+  - *cleanup_rollback_script
   
   # Restore database, by first stopping the postgres container,
   # then starting it again, and finally restoring the database from the backup.
@@ -1029,12 +1040,6 @@ tag_and_merge:
     - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
     - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git tagging_repo
     - cd tagging_repo
-
-    - git status
-    - ls
-    - git branch
-    - git submodule status
-    - git remote -v
     
     # Tag each submodule at locked SHA, and merge to main.
     # We use the SHAs from the submodule_shas.env file,
