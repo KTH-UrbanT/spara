@@ -10,23 +10,27 @@
 #
 # This file contains the full pipeline for the assembly process.
 # This includes:
-# - Preparing the environments
-# - Building Docker images
-# - Testing 
+# - Preparing staging environment (build staging images)
+# - Testing
 # - Deploying to staging
+# - Finishing staging (tagging and merging)
+# - Preparing production environment (build production images)
 # - Deploying to production
+# - Finishing production (rollbacks on failure)
 # - Keeping track of successful deployments
 # - Tagging submodules and assembly repo
-# - Rollbacks for production
 # - Cleanup
 #
 
 stages:
-  - prepare
+  - prepare_staging
   - test
   - deploy_staging
   - finish_staging
+  - prepare_production
   - deploy_production
+  - finish_production
+  - finish_production
 
 variables:
   COMPOSE_FILE_TEST:          docker-compose.test.yml
@@ -448,7 +452,7 @@ before_script:
 # GitLab can lead to issues with submodule SHAs.
 # This job is from most files are sent as artifacts.
 prepare_environment:
-  stage: prepare
+  stage: prepare_staging
   image: alpine:3.18
   interruptible: true
   script:
@@ -509,7 +513,7 @@ prepare_environment:
 # We have multiple build jobs, one for each service, to
 # make use of parallelism.
 build_frontend:
-  stage: prepare
+  stage: prepare_staging
   image: docker:24.0-cli
   interruptible: true
   needs: 
@@ -536,7 +540,7 @@ build_frontend:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 build_message_service:
-  stage: prepare
+  stage: prepare_staging
   image: docker:24.0-cli
   interruptible: true
   needs: 
@@ -563,7 +567,7 @@ build_message_service:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 build_llm_service:
-  stage: prepare
+  stage: prepare_staging
   image: docker:24.0-cli
   interruptible: true
   needs:  
@@ -589,7 +593,7 @@ build_llm_service:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 combine_build_images:
-  stage: prepare
+  stage: prepare_staging
   image: docker:24.0-cli
   interruptible: true
   needs: 
@@ -616,7 +620,7 @@ combine_build_images:
 
 # Build jobs for production with different configurations
 build_frontend_prod:
-  stage: deploy_production
+  stage: prepare_production
   image: docker:24.0-cli
   interruptible: true
   needs: 
@@ -645,7 +649,7 @@ build_frontend_prod:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 build_message_service_prod:
-  stage: deploy_production
+  stage: prepare_production
   image: docker:24.0-cli
   interruptible: true
   needs: 
@@ -674,7 +678,7 @@ build_message_service_prod:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 build_llm_service_prod:
-  stage: deploy_production
+  stage: prepare_production
   image: docker:24.0-cli
   interruptible: true
   needs:  
@@ -709,7 +713,7 @@ build_llm_service_prod:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 combine_build_images_prod:
-  stage: deploy_production
+  stage: prepare_production
   image: docker:24.0-cli
   interruptible: true
   needs: 
@@ -1006,7 +1010,7 @@ cleanup_on_failure:
 # This job must be manually triggered after successful tagging
 # due to its high impact on the project.
 merge_assembly_to_main:
-  stage: deploy_production
+  stage: prepare_production
   image: alpine:3.18
   resource_group: remote_staging
   needs:
@@ -1120,7 +1124,7 @@ deploy_and_validate_remote_production:
 # This job will attempt to restore the last successful deployment
 # by restoring the database and deploying the last successful code version.
 rollback_production_on_failure:
-  stage: deploy_production
+  stage: finish_production
   image: alpine:3.18
   resource_group: remote_production
   services:
