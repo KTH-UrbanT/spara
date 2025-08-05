@@ -388,6 +388,141 @@ variables:
       mv $TARGET_TAG_FILE.tmp $TARGET_TAG_FILE"
   - echo "Deployment completed successfully with tag $CURRENT_ASSEMBLY_TAG"
 
+# YAML anchor for production rollback pattern
+.rollback_production_template: &rollback_production
+  - echo "=== PRODUCTION ROLLBACK INITIATED ==="
+  - echo "Production deployment failed. Initiating rollback..."
+
+  # Setup SSH for later use
+  - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
+  
+  # Get the last successful tag (last line in the file),
+  # or throw an error if it doesn't exist.
+  - echo "Retrieving last successful production tag..."
+  - LAST_SUCCESSFUL_TAG=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "tail -n 1 $PRODUCTION_TAG_FILE 2>/dev/null || echo 'NONE'")
+  - echo "Last successful tag $LAST_SUCCESSFUL_TAG"
+  - |
+    if [ "$LAST_SUCCESSFUL_TAG" = "NONE" ] || [ -z "$LAST_SUCCESSFUL_TAG" ]; then
+      echo "ERROR: No previous successful deployment found. Manual intervention required."
+      echo "Cannot perform automatic rollback without a known good state."
+      exit 1
+    fi
+  
+  # Find corresponding backup
+  - echo "Looking for backup file for tag $LAST_SUCCESSFUL_TAG"
+  - ROLLBACK_BACKUP_FILE="$PRODUCTION_BACKUP_ARCHIVE/backup_${LAST_SUCCESSFUL_TAG}.sql"
+  
+  # Verify backup exists
+  - |
+    BACKUP_EXISTS=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "[ -f '$ROLLBACK_BACKUP_FILE' ] && echo 'YES' || echo 'NO'")
+    if [ "$BACKUP_EXISTS" = "NO" ]; then
+      echo "ERROR: Backup file $ROLLBACK_BACKUP_FILE not found."
+      echo "Available tagged backups:"
+      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "ls -la $PRODUCTION_BACKUP_ARCHIVE/ || echo 'No tagged backups found'"
+      echo "Manual intervention required."
+      exit 1
+    fi
+  
+  # Stop current failed services using the standard cleanup script
+  - echo "=== STOPPING FAILED SERVICES ==="
+  - echo "Using production cleanup script to stop failed services"
+  - *cleanup_production_script
+  
+  # Restore database, by first stopping the postgres container,
+  # then starting it again, and finally restoring the database from the backup.
+  # We stop it to ensure no writes are happening during the restore.
+  - echo "=== RESTORING DATABASE ==="
+  - echo "Restoring database from backup $ROLLBACK_BACKUP_FILE"
+  - |
+    $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+      set -euo pipefail
+      echo "Stopping postgres container temporarily for restore..."
+      cd $PRODUCTION_REMOTE_PATH/infra
+      sudo docker compose -f docker-compose.prod.yml stop postgres || true
+      
+      echo "Starting postgres container for restore..."
+      sudo docker compose -f docker-compose.prod.yml up -d postgres
+      sleep 10
+      
+      echo "Restoring database from $ROLLBACK_BACKUP_FILE..."
+      sudo docker exec -i spara-postgres psql -U postgres < $ROLLBACK_BACKUP_FILE
+      
+      echo "Database restored successfully"
+    EOF
+  
+  # Fetch and deploy the previous successful version from Git
+  - echo "=== FETCHING PREVIOUS SUCCESSFUL VERSION ==="
+  - echo "Fetching and building application code from tag $LAST_SUCCESSFUL_TAG"
+  
+  # Parse the tag to get the original assembly tag that was used
+  # Format: production-YYYYMMDD-HHMMSS-pipeline_id
+  - ASSEMBLY_PIPELINE_ID=$(echo "$LAST_SUCCESSFUL_TAG" | cut -d'-' -f4)
+  - echo "Looking for assembly tag from pipeline $ASSEMBLY_PIPELINE_ID"
+  
+  # Clone the repository and checkout the successful tag
+  - apk add --no-cache git docker-cli docker-compose
+  - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
+  - git clone --recursive git@github.com:KTH-UrbanT/spara.git rollback_repo
+  - cd rollback_repo
+  
+  # Find the assembly tag from the same time period
+  - ASSEMBLY_TAG=$(git tag -l "passed_test-*" | grep -E "$(echo $LAST_SUCCESSFUL_TAG | cut -d'-' -f2-3)" | head -1)
+  - |
+    if [ -z "$ASSEMBLY_TAG" ]; then
+      echo "WARNING: Could not find matching assembly tag. Using main branch."
+      ASSEMBLY_TAG="main"
+    fi
+  - echo "Using assembly tag $ASSEMBLY_TAG"
+  
+  - git checkout "$ASSEMBLY_TAG"
+  - git submodule update --recursive
+  
+  # Inject .env files (they should be the same)
+  - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
+  - echo "$LLM_SERVICE_ENV" > llm-service/.env
+  
+  # Build the Docker images for rollback
+  - echo "Building Docker images for rollback..."
+  - docker compose -f infra/docker-compose.prod.yml build --no-cache
+  
+  # Save images as tar files (using standard names for reusability)
+  - docker save -o message-service-prod.tar spara-message-service:latest
+  - docker save -o llm-service-prod.tar spara-llm-service:latest
+  - docker save -o frontend-prod.tar spara-frontend:latest
+  - cd ..
+  
+  # Upload rollback images to production server (reusing standard anchor)
+  - TARGET_USERNAME="$PRODUCTION_USERNAME"
+  - TARGET_HOST="$PRODUCTION_HOST"
+  - TARGET_REMOTE_PATH="$PRODUCTION_REMOTE_PATH"
+  - SSH_KEY_PATH="~/.ssh/production_remote_key"
+  - SOURCE_PATH="rollback_repo/"
+  - TAR_SUFFIX="-prod.tar"
+  - *copy_files
+  
+  # Load rollback images on production server (reusing standard anchor)
+  - *load_images_prod
+  
+  # Deploy the rollback version
+  - echo "=== DEPLOYING ROLLBACK VERSION ==="
+  - |
+    $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+      set -euo pipefail
+      cd $PRODUCTION_REMOTE_PATH/infra
+      
+      echo "Starting rollback deployment..."
+      sudo docker compose -f docker-compose.prod.yml up -d --no-deps
+      
+      echo "Verifying rollback deployment..."
+      sleep 10
+      sudo docker compose -f docker-compose.prod.yml ps
+    EOF
+  
+  - echo "=== ROLLBACK COMPLETED ==="
+  - echo "Successfully rolled back to tag $LAST_SUCCESSFUL_TAG"
+  - echo "Both application and database have been restored to last known good state."
+  - echo "Services should be fully operational."
+
 # The 'container_setup' job initializes the Git repository, installs necessary dependencies,
 # and prepares the environment for testing and deployment.
 before_script:
@@ -1041,7 +1176,6 @@ merge_assembly_to_main:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: manual
-    - if: '$CI_COMMIT_BRANCH == "main"'
 
 # Deploy And Validate Remote Production
 #
@@ -1119,12 +1253,12 @@ deploy_and_validate_remote_production:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Rollback Production On Failure
+# Automatic Production Rollback
 #
 # Production rollback job - automatically triggers on production deployment failure.
 # This job will attempt to restore the last successful deployment
 # by restoring the database and deploying the last successful code version.
-rollback_production_on_failure:
+automatic_rollback:
   stage: finish_production
   image: alpine:3.18
   resource_group: remote_production
@@ -1136,146 +1270,34 @@ rollback_production_on_failure:
   needs:
     - deploy_and_validate_remote_production
   script:
-
     # Set strict error handling
     - set -euo pipefail
-
-    - echo "=== PRODUCTION ROLLBACK INITIATED ==="
-    - echo "Production deployment failed. Initiating automatic rollback..."
-
-    # Setup SSH for later use
-    - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
-    
-    # Get the last successful tag (last line in the file),
-    # or throw an error if it doesn't exist.
-    - echo "Retrieving last successful production tag..."
-    - LAST_SUCCESSFUL_TAG=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "tail -n 1 $PRODUCTION_TAG_FILE 2>/dev/null || echo 'NONE'")
-    - echo "Last successful tag $LAST_SUCCESSFUL_TAG"
-    - |
-      if [ "$LAST_SUCCESSFUL_TAG" = "NONE" ] || [ -z "$LAST_SUCCESSFUL_TAG" ]; then
-        echo "ERROR: No previous successful deployment found. Manual intervention required."
-        echo "Cannot perform automatic rollback without a known good state."
-        exit 1
-      fi
-    
-    # Find corresponding backup
-    - echo "Looking for backup file for tag $LAST_SUCCESSFUL_TAG"
-    - ROLLBACK_BACKUP_FILE="$PRODUCTION_BACKUP_ARCHIVE/backup_${LAST_SUCCESSFUL_TAG}.sql"
-    
-    # Verify backup exists
-    - |
-      BACKUP_EXISTS=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "[ -f '$ROLLBACK_BACKUP_FILE' ] && echo 'YES' || echo 'NO'")
-      if [ "$BACKUP_EXISTS" = "NO" ]; then
-        echo "ERROR: Backup file $ROLLBACK_BACKUP_FILE not found."
-        echo "Available tagged backups:"
-        $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "ls -la $PRODUCTION_BACKUP_ARCHIVE/ || echo 'No tagged backups found'"
-        echo "Manual intervention required."
-        exit 1
-      fi
-    
-    # Stop current failed services using the standard cleanup script
-    - echo "=== STOPPING FAILED SERVICES ==="
-    - echo "Using production cleanup script to stop failed services"
-    - *cleanup_production_script
-    
-    # Restore database, by first stopping the postgres container,
-    # then starting it again, and finally restoring the database from the backup.
-    # We stop it to ensure no writes are happening during the restore.
-    - echo "=== RESTORING DATABASE ==="
-    - echo "Restoring database from backup $ROLLBACK_BACKUP_FILE"
-    - |
-      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
-        set -euo pipefail
-        echo "Stopping postgres container temporarily for restore..."
-        cd $PRODUCTION_REMOTE_PATH/infra
-        sudo docker compose -f docker-compose.prod.yml stop postgres || true
-        
-        echo "Starting postgres container for restore..."
-        sudo docker compose -f docker-compose.prod.yml up -d postgres
-        sleep 10
-        
-        echo "Restoring database from $ROLLBACK_BACKUP_FILE..."
-        sudo docker exec -i spara-postgres psql -U postgres < $ROLLBACK_BACKUP_FILE
-        
-        echo "Database restored successfully"
-      EOF
-    
-    # Fetch and deploy the previous successful version from Git
-    - echo "=== FETCHING PREVIOUS SUCCESSFUL VERSION ==="
-    - echo "Fetching and building application code from tag $LAST_SUCCESSFUL_TAG"
-    
-    # Parse the tag to get the original assembly tag that was used
-    # Format: production-YYYYMMDD-HHMMSS-pipeline_id
-    - ASSEMBLY_PIPELINE_ID=$(echo "$LAST_SUCCESSFUL_TAG" | cut -d'-' -f4)
-    - echo "Looking for assembly tag from pipeline $ASSEMBLY_PIPELINE_ID"
-    
-    # Clone the repository and checkout the successful tag
-    - apk add --no-cache git docker-cli docker-compose
-    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-    - git clone --recursive git@github.com:KTH-UrbanT/spara.git rollback_repo
-    - cd rollback_repo
-    
-    # Find the assembly tag from the same time period
-    - ASSEMBLY_TAG=$(git tag -l "passed_test-*" | grep -E "$(echo $LAST_SUCCESSFUL_TAG | cut -d'-' -f2-3)" | head -1)
-    - |
-      if [ -z "$ASSEMBLY_TAG" ]; then
-        echo "WARNING: Could not find matching assembly tag. Using main branch."
-        ASSEMBLY_TAG="main"
-      fi
-    - echo "Using assembly tag $ASSEMBLY_TAG"
-    
-    - git checkout "$ASSEMBLY_TAG"
-    - git submodule update --recursive
-    
-    # Inject .env files (they should be the same)
-    - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
-    - echo "$LLM_SERVICE_ENV" > llm-service/.env
-    
-    # Build the Docker images for rollback
-    - echo "Building Docker images for rollback..."
-    - docker compose -f infra/docker-compose.prod.yml build --no-cache
-    
-    # Save images as tar files (using standard names for reusability)
-    - docker save -o message-service-prod.tar spara-message-service:latest
-    - docker save -o llm-service-prod.tar spara-llm-service:latest
-    - docker save -o frontend-prod.tar spara-frontend:latest
-    - cd ..
-    
-    # Upload rollback images to production server (reusing standard anchor)
-    - TARGET_USERNAME="$PRODUCTION_USERNAME"
-    - TARGET_HOST="$PRODUCTION_HOST"
-    - TARGET_REMOTE_PATH="$PRODUCTION_REMOTE_PATH"
-    - SSH_KEY_PATH="~/.ssh/production_remote_key"
-    - SOURCE_PATH="rollback_repo/"
-    - TAR_SUFFIX="-prod.tar"
-    - *copy_files
-    
-    # Load rollback images on production server (reusing standard anchor)
-    - *load_images
-    
-    # Deploy the rollback version
-    - echo "=== DEPLOYING ROLLBACK VERSION ==="
-    - |
-      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
-        set -euo pipefail
-        cd $PRODUCTION_REMOTE_PATH/infra
-        
-        echo "Starting rollback deployment..."
-        sudo docker compose -f docker-compose.prod.yml up -d --no-deps
-        
-        echo "Verifying rollback deployment..."
-        sleep 10
-        sudo docker compose -f docker-compose.prod.yml ps
-      EOF
-    
-    - echo "=== ROLLBACK COMPLETED ==="
-    - echo "Successfully rolled back to tag $LAST_SUCCESSFUL_TAG"
-    - echo "Both application and database have been restored to last known good state."
-    - echo "Services should be fully operational."
-    
+    - *rollback_production
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: on_failure
+
+# Manual Production Rollback
+#
+# Production rollback job - can be manually triggered when needed.
+# This job will attempt to restore the last successful deployment
+# by restoring the database and deploying the last successful code version.
+manual_rollback:
+  stage: finish_production
+  image: alpine:3.18
+  resource_group: remote_production
+  services:
+    - docker:dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_DRIVER: overlay2
+  needs:
+    - deploy_and_validate_remote_production
+  script:
+    # Set strict error handling
+    - set -euo pipefail
+    - *rollback_production
+  rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: manual
       allow_failure: true
