@@ -920,9 +920,9 @@ tag_and_merge:
         git push origin "$TAG_VALUE"
 
         # Merge the tagged commit to main
-        git checkout main
-        git merge --no-ff "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
-        git push origin main
+        # git checkout main
+        # git merge --no-ff "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
+        # git push origin main
         cd ..
       done
 
