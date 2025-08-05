@@ -58,38 +58,55 @@ variables:
   # done to fix a version and speed issue.
   GIT_STRATEGY: none
 
-# YAML anchor for unified cleanup script template
-# Takes parameters: CLEANUP_HOST, CLEANUP_USERNAME, CLEANUP_REMOTE_PATH, CLEANUP_COMPOSE_FILE
-# We use these parameters to customize the cleanup process for each environment.
-.cleanup_script_template: &cleanup_script
+# YAML anchor for common cleanup script template - parameterized for staging vs production
+.cleanup_script_base_template: &cleanup_script_base
   - echo "SSH_CMD=$SSH_CMD"
   - echo "CLEANUP_USERNAME=$CLEANUP_USERNAME"
   - echo "CLEANUP_HOST=$CLEANUP_HOST"
   - echo "CLEANUP_REMOTE_PATH=$CLEANUP_REMOTE_PATH"
   - echo "CLEANUP_COMPOSE_FILE=$CLEANUP_COMPOSE_FILE"
+  - echo "CLEANUP_ENVIRONMENT=$CLEANUP_ENVIRONMENT"
+  - echo "CLEANUP_SERVICES=$CLEANUP_SERVICES"
+  - echo "CLEANUP_VOLUMES=$CLEANUP_VOLUMES"
   - |
     $SSH_CMD $CLEANUP_USERNAME@$CLEANUP_HOST <<EOF
       set -euxo pipefail
       #set -euo pipefail
 
-      echo "Stopping application services only (preserving databases)..."
+      echo "$CLEANUP_ENVIRONMENT cleanup..."
       if [ -d "$CLEANUP_REMOTE_PATH/infra" ] && [ -f "$CLEANUP_REMOTE_PATH/infra/$CLEANUP_COMPOSE_FILE" ]; then
         cd $CLEANUP_REMOTE_PATH/infra
         
-        # Stop application services and redis, keep postgres running
-        sudo docker compose -f $CLEANUP_COMPOSE_FILE stop frontend message-service llm-service redis || true
-        sudo docker compose -f $CLEANUP_COMPOSE_FILE rm -f frontend message-service llm-service redis || true
-        echo "Stopped application services (frontend, message-service, llm-service, redis)."
+        # Stop services based on environment
+        if [ "$CLEANUP_SERVICES" = "ALL" ]; then
+          echo "Stopping ALL services including database ($CLEANUP_ENVIRONMENT environment)..."
+          sudo docker compose -f $CLEANUP_COMPOSE_FILE stop || true
+          sudo docker compose -f $CLEANUP_COMPOSE_FILE rm -f || true
+          echo "Stopped and removed all services (frontend, message-service, llm-service, redis, postgres)."
+        else
+          echo "Stopping application services only (preserving databases)..."
+          sudo docker compose -f $CLEANUP_COMPOSE_FILE stop frontend message-service llm-service redis || true
+          sudo docker compose -f $CLEANUP_COMPOSE_FILE rm -f frontend message-service llm-service redis || true
+          echo "Stopped application services (frontend, message-service, llm-service, redis)."
+        fi
 
         # Remove old application images to free space
         sudo docker rmi spara-frontend:latest 2>/dev/null || true
         sudo docker rmi spara-message-service:latest 2>/dev/null || true
         sudo docker rmi spara-llm-service:latest 2>/dev/null || true
 
-        # Optionally clear redis data volume (uncomment if you want to clear redis data)
-        # sudo docker volume rm $(sudo docker volume ls -q | grep redis) 2>/dev/null || true
-
-        echo "Database service (postgres) remains untouched."
+        # Handle volume cleanup based on environment
+        if [ "$CLEANUP_VOLUMES" = "ALL" ]; then
+          echo "Clearing all data volumes ($CLEANUP_ENVIRONMENT environment)..."
+          sudo docker volume rm \$(sudo docker volume ls -q | grep redis) 2>/dev/null || true
+          sudo docker volume rm \$(sudo docker volume ls -q | grep postgres) 2>/dev/null || true
+          sudo docker volume rm \$(sudo docker volume ls -q | grep spara) 2>/dev/null || true
+          echo "Database and all data volumes have been removed ($CLEANUP_ENVIRONMENT environment)."
+        else
+          echo "Database service (postgres) and volumes remain untouched."
+          # Optionally clear redis data volume (uncomment if you want to clear redis data)
+          # sudo docker volume rm \$(sudo docker volume ls -q | grep redis) 2>/dev/null || true
+        fi
         
         # Remove only Docker image tarballs older than 7 days to free up disk space
         sudo find $CLEANUP_REMOTE_PATH -maxdepth 1 -name "*.tar" -mtime +7 -exec rm -f {} \; 2>/dev/null || true
@@ -105,7 +122,7 @@ variables:
         df -h /
 
         echo "Safe Docker cleanup..."
-        # Remove stopped containers (but not database containers)
+        # Remove stopped containers based on environment
         sudo docker rm \$(sudo docker ps -aq -f status=exited) 2>/dev/null || true
 
         # Remove dangling (untagged) images only
@@ -121,7 +138,11 @@ variables:
         USAGE=\$(df / | awk 'NR==2 {print \$5}' | tr -d '%')
         if [ "\$USAGE" -gt 90 ]; then
           echo "WARNING: Root filesystem is over 90% full. Manual intervention may be needed."
-          echo "Database volumes and data have been preserved."
+          if [ "$CLEANUP_VOLUMES" = "ALL" ]; then
+            echo "All services and data volumes have been removed for $CLEANUP_ENVIRONMENT."
+          else
+            echo "Database volumes and data have been preserved."
+          fi
         fi
 
       else
@@ -129,21 +150,27 @@ variables:
       fi
     EOF
 
-# YAML anchor for staging cleanup - sets parameters and calls unified script
+# YAML anchor for staging cleanup - sets all parameters and calls base script
 .cleanup_staging_script_template: &cleanup_staging_script
   - CLEANUP_HOST="$STAGING_HOST"
   - CLEANUP_USERNAME="$STAGING_USERNAME" 
   - CLEANUP_REMOTE_PATH="$STAGING_REMOTE_PATH"
   - CLEANUP_COMPOSE_FILE="$COMPOSE_FILE_TEST"
-  - *cleanup_script
+  - CLEANUP_ENVIRONMENT="Staging"
+  - CLEANUP_SERVICES="ALL"
+  - CLEANUP_VOLUMES="ALL"
+  - *cleanup_script_base
 
-# YAML anchor for production cleanup - sets parameters and calls unified script
+# YAML anchor for production cleanup - sets all parameters and calls base script
 .cleanup_production_script_template: &cleanup_production_script
   - CLEANUP_HOST="$PRODUCTION_HOST"
   - CLEANUP_USERNAME="$PRODUCTION_USERNAME"
   - CLEANUP_REMOTE_PATH="$PRODUCTION_REMOTE_PATH" 
   - CLEANUP_COMPOSE_FILE="$COMPOSE_FILE_PROD"
-  - *cleanup_script
+  - CLEANUP_ENVIRONMENT="Production"
+  - CLEANUP_SERVICES="APP_ONLY"
+  - CLEANUP_VOLUMES="PRESERVE"
+  - *cleanup_script_base
 
 # YAML anchor for Docker installation check pattern
 .docker_install_check_template: &docker_install_check
@@ -280,9 +307,6 @@ variables:
       sudo docker load -i message-service-prod.tar
       sudo docker load -i llm-service-prod.tar
       sudo docker load -i frontend-prod.tar
-      if [ -f migration-service-prod.tar ]; then
-        sudo docker load -i migration-service-prod.tar
-      fi
     EOF
 
 # YAML anchor for deploy with retry pattern
@@ -679,7 +703,7 @@ build_llm_service_prod:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
   artifacts:
     paths:
-      - migration-service-prod.tar
+      - llm-service-prod.tar
     expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
@@ -789,13 +813,10 @@ deploy_and_validate_remote_staging:
     # Set strict error handling
     - set -euo pipefail
     
-    # Step 1: Cleanup (from cleanup_remote)
-    - echo "=== CLEANUP PHASE ==="
-    - echo "Cleaning up staging server before deployment"
+    # Step 1: Backup Postgres (before cleanup removes it)
+    - echo "=== BACKUP PHASE ==="
+    - echo "Backing up staging database before cleanup"
     - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
-    - *cleanup_staging_script
-
-    # Step 2: Backup Postgres
     - TARGET_USERNAME="$STAGING_USERNAME"
     - TARGET_HOST="$STAGING_HOST"
     - TARGET_BACKUP_ARCHIVE="$STAGING_BACKUP_ARCHIVE"
@@ -803,6 +824,11 @@ deploy_and_validate_remote_staging:
     - ENVIRONMENT="staging"
     - POSTGRES_CONTAINER="spara-postgres-test"
     - *backup_postgres
+
+    # Step 2: Cleanup (remove all services including postgres)
+    - echo "=== CLEANUP PHASE ==="
+    - echo "Cleaning up staging server before deployment"
+    - *cleanup_staging_script
 
     # Step 3: Copy files to staging server
     - echo "=== SYNC PHASE ==="
@@ -817,7 +843,7 @@ deploy_and_validate_remote_staging:
     - *load_images
     
     # Run database migrations
-    - echo "Running database migrations..."
+    #- echo "Running database migrations..."
     - export COMPOSE_FILE="$COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI"
     #- $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration_service alembic upgrade head || true"
 
@@ -1065,7 +1091,7 @@ deploy_and_validate_remote_production:
     - *load_images_prod
     
     # Run database migrations
-    - echo "Running database migrations..."
+    #- echo "Running database migrations..."
     #- $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration_service alembic upgrade head || true"
 
     # Start the services using Docker Compose with retry logic
