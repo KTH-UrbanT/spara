@@ -92,6 +92,7 @@ services:
     environment:
       - VITE_MS_URL=http://localhost:8000
       - VITE_MS_SOCKETIO_URL=ws://localhost:8000
+      - CHOKIDAR_USEPOLLING=true # Added for hot reloading in Docker
     depends_on:
       - message-service
 

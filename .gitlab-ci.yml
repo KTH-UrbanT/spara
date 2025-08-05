@@ -1041,6 +1041,7 @@ merge_assembly_to_main:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: manual
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
 # Deploy And Validate Remote Production
 #
