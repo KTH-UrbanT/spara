@@ -439,7 +439,7 @@ variables:
   - echo "Using rollback cleanup script to stop failed services"
   - *cleanup_rollback_script
   
-  # Restore database, by first stopping the postgres container,
+  # Restore database, by first stopping the spara-postgres container,
   # then starting it again, and finally restoring the database from the backup.
   # We stop it to ensure no writes are happening during the restore.
   - echo "=== RESTORING DATABASE ==="
@@ -447,12 +447,12 @@ variables:
   - |
     $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
       set -euo pipefail
-      echo "Stopping postgres container temporarily for restore..."
+      echo "Stopping spara-postgres container temporarily for restore..."
       cd $PRODUCTION_REMOTE_PATH/infra
-      sudo docker compose -f docker-compose.prod.yml stop postgres || true
+      sudo docker compose -f $COMPOSE_FILE_PROD stop spara-postgres || true
       
-      echo "Starting postgres container for restore..."
-      sudo docker compose -f docker-compose.prod.yml up -d postgres
+      echo "Starting spara-postgres container for restore..."
+      sudo docker compose -f $COMPOSE_FILE_PROD up -d spara-postgres
       sleep 10
       
       echo "Restoring database from $ROLLBACK_BACKUP_FILE..."
@@ -494,7 +494,7 @@ variables:
   
   # Build the Docker images for rollback
   - echo "Building Docker images for rollback..."
-  - docker compose -f infra/docker-compose.prod.yml build --no-cache
+  - docker compose -f infra/$COMPOSE_FILE_PROD build --no-cache
   
   # Save images as tar files (using standard names for reusability)
   - docker save -o message-service-prod.tar spara-message-service:latest
@@ -522,11 +522,11 @@ variables:
       cd $PRODUCTION_REMOTE_PATH/infra
       
       echo "Starting rollback deployment..."
-      sudo docker compose -f docker-compose.prod.yml up -d --no-deps
-      
+      sudo docker compose -f $COMPOSE_FILE_PROD up -d --no-deps
+
       echo "Verifying rollback deployment..."
       sleep 10
-      sudo docker compose -f docker-compose.prod.yml ps
+      sudo docker compose -f $COMPOSE_FILE_PROD ps
     EOF
   
   - echo "=== ROLLBACK COMPLETED ==="
@@ -1252,13 +1252,13 @@ deploy_and_validate_remote_production:
     #- $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration_service alembic upgrade head || true"
 
     # Start the services using Docker Compose with retry logic
-    - COMPOSE_FILE="docker-compose.prod.yml"
+    - COMPOSE_FILE=$COMPOSE_FILE_PROD
     - *deploy_with_retry
     
     # Verify the deployment
     - echo "Verifying production deployment..."
     - sleep 15
-    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f docker-compose.prod.yml ps"
+    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_PROD ps"
 
     # Step 5: Validate production deployment
     - VALIDATION_URL="https://sparabot.com/"
