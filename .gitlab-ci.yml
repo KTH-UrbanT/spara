@@ -1016,11 +1016,10 @@ deploy_and_validate_remote_staging:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
-# Tag And Merge
+# Tag Submodules
 #
-# Tag the submodules and the assembly repo. after successful tests,
-# and merge the changes back to the main branch of each submodule.
-tag_and_merge:
+# Tag the submodules and the assembly repo. after successful tests.
+tag_submodules:
   stage: finish_staging
   image: alpine:3.18
   interruptible: false  # Don't interrupt tagging once started
@@ -1150,7 +1149,7 @@ merge_assembly_to_main:
   resource_group: remote_staging
   needs:
     - prepare_environment # To get the assembly repo
-    - tag_and_merge  # To get the assembly tag
+    - tag_submodules  # To get the assembly tag
     - test_all_services  # To get the tag names from dotenv
   script:
 
@@ -1178,16 +1177,30 @@ merge_assembly_to_main:
         cd "$name"
         git fetch origin
         git checkout main
-        git merge --no-ff "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
-        git push origin main
+
+        # Check if tag is already merged
+        if git merge-base --is-ancestor "$TAG_VALUE" main; then
+          echo "Tag $TAG_VALUE is already merged into main for $name"
+        else
+          echo "Merging tag $TAG_VALUE into main for $name"
+          git merge --no-ff "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
+          git push origin main
+        fi
+
         cd ..
       done
     
     # Then merge the assembly repo's current state/tag to main and push it.
     - git fetch origin main
     - git checkout main
-    - git merge --no-ff "$ASSEMBLY_TAG" -m "Merge assembly release $ASSEMBLY_TAG to main"
-    - git push origin main
+    - |
+      if git merge-base --is-ancestor "$ASSEMBLY_TAG" main; then
+        echo "Assembly tag $ASSEMBLY_TAG is already merged into main"
+      else
+        echo "Merging assembly tag $ASSEMBLY_TAG into main"
+        git merge --no-ff "$ASSEMBLY_TAG" -m "Merge assembly release $ASSEMBLY_TAG to main"
+        git push origin main
+      fi
 
     - echo "Successfully merged assembly tag $ASSEMBLY_TAG and all submodule tags to main"
 
