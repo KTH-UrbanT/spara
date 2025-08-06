@@ -873,12 +873,6 @@ build_llm_service_prod:
     expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-  artifacts:
-    paths:
-      - llm-service-prod.tar
-    expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
 combine_build_images_prod:
   stage: prepare_production
