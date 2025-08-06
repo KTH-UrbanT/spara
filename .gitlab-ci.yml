@@ -415,7 +415,7 @@ variables:
   - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
   
   # Determine rollback strategy based on rollback type
-  - echo "Rollback type: ${ROLLBACK_TYPE:-automatic}"
+  - echo "Rollback type ${ROLLBACK_TYPE:-automatic}"
   - |
     if [ "${ROLLBACK_TYPE:-automatic}" = "manual" ]; then
       ROLLBACK_STEPS=2
@@ -432,7 +432,7 @@ variables:
   # Get the target successful tag based on rollback steps
   - echo "Retrieving target production tag ($ROLLBACK_STEPS steps back)..."
   - LAST_SUCCESSFUL_TAG=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "tail -n $ROLLBACK_STEPS $PRODUCTION_TAG_FILE 2>/dev/null | head -n 1 || echo 'NONE'")
-  - echo "Target rollback tag: $LAST_SUCCESSFUL_TAG"
+  - echo "Target rollback tag $LAST_SUCCESSFUL_TAG"
   - |
     if [ "$LAST_SUCCESSFUL_TAG" = "NONE" ] || [ -z "$LAST_SUCCESSFUL_TAG" ]; then
       echo "ERROR: Cannot rollback $ROLLBACK_STEPS deployment(s) - insufficient deployment history."
@@ -867,12 +867,6 @@ build_llm_service_prod:
     # Tag the image as tar
     - docker save -o llm-service-prod.tar llm-service:prod
 
-  artifacts:
-    paths:
-      - llm-service-prod.tar
-    expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
   artifacts:
     paths:
       - llm-service-prod.tar
@@ -1355,4 +1349,5 @@ manual_rollback:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: manual
+
 
