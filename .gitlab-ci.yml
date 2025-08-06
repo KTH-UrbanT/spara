@@ -396,7 +396,6 @@ variables:
     done
 
 # YAML anchor for recording success pattern
-
 .record_success_template: &record_success
   - echo "=== RECORD SUCCESSFUL TAG ==="
   - echo "Recording successful deployment tag $CURRENT_ASSEMBLY_TAG"
@@ -415,15 +414,31 @@ variables:
   # Setup SSH for later use
   - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
   
-  # Get the last successful tag (last line in the file),
-  # or throw an error if it doesn't exist.
-  - echo "Retrieving last successful production tag..."
-  - LAST_SUCCESSFUL_TAG=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "tail -n 1 $PRODUCTION_TAG_FILE 2>/dev/null || echo 'NONE'")
-  - echo "Last successful tag $LAST_SUCCESSFUL_TAG"
+  # Determine rollback strategy based on rollback type
+  - echo "Rollback type: ${ROLLBACK_TYPE:-automatic}"
+  - |
+    if [ "${ROLLBACK_TYPE:-automatic}" = "manual" ]; then
+      ROLLBACK_STEPS=2
+      echo "Manual rollback: Going back $ROLLBACK_STEPS deployments to skip potentially problematic recent deployment"
+    else
+      ROLLBACK_STEPS=1
+      echo "Automatic rollback: Going back $ROLLBACK_STEPS deployment to last known good state"
+    fi
+  
+  # Show available deployment history for context
+  - echo "Available successful deployment history:"
+  - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "cat $PRODUCTION_TAG_FILE 2>/dev/null | tail -n 5 | nl -v0" || echo "No deployment history found"
+  
+  # Get the target successful tag based on rollback steps
+  - echo "Retrieving target production tag ($ROLLBACK_STEPS steps back)..."
+  - LAST_SUCCESSFUL_TAG=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "tail -n $ROLLBACK_STEPS $PRODUCTION_TAG_FILE 2>/dev/null | head -n 1 || echo 'NONE'")
+  - echo "Target rollback tag: $LAST_SUCCESSFUL_TAG"
   - |
     if [ "$LAST_SUCCESSFUL_TAG" = "NONE" ] || [ -z "$LAST_SUCCESSFUL_TAG" ]; then
-      echo "ERROR: No previous successful deployment found. Manual intervention required."
-      echo "Cannot perform automatic rollback without a known good state."
+      echo "ERROR: Cannot rollback $ROLLBACK_STEPS deployment(s) - insufficient deployment history."
+      echo "Available deployments:"
+      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "cat $PRODUCTION_TAG_FILE 2>/dev/null || echo 'No deployment history'"
+      echo "Manual intervention required."
       exit 1
     fi
   
@@ -1294,7 +1309,7 @@ deploy_and_validate_remote_production:
 # Automatic Production Rollback
 #
 # Production rollback job - automatically triggers on production deployment failure.
-# This job will attempt to restore the last successful deployment
+# This job will attempt to restore the last successful deployment (1 step back)
 # by restoring the database and deploying the last successful code version.
 automatic_rollback:
   stage: finish_production
@@ -1305,6 +1320,7 @@ automatic_rollback:
   variables:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
+    ROLLBACK_TYPE: "automatic"
   needs:
     - deploy_and_validate_remote_production
   script:
@@ -1318,8 +1334,8 @@ automatic_rollback:
 # Manual Production Rollback
 #
 # Production rollback job - can be manually triggered when needed.
-# This job will attempt to restore the last successful deployment
-# by restoring the database and deploying the last successful code version.
+# This job will attempt to restore a deployment from 2 steps back
+# by restoring the database and deploying the previous successful code version.
 manual_rollback:
   stage: finish_production
   image: alpine:3.18
@@ -1329,6 +1345,7 @@ manual_rollback:
   variables:
     DOCKER_BUILDKIT: "1"
     DOCKER_DRIVER: overlay2
+    ROLLBACK_TYPE: "manual"
   needs:
     - deploy_and_validate_remote_production
   script:
