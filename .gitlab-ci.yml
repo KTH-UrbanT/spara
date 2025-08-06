@@ -183,8 +183,8 @@ variables:
   - CLEANUP_REMOTE_PATH="$PRODUCTION_REMOTE_PATH" 
   - CLEANUP_COMPOSE_FILE="$COMPOSE_FILE_PROD"
   - CLEANUP_ENVIRONMENT="Production"
-  - CLEANUP_SERVICES="ALL"
-  - CLEANUP_VOLUMES="ALL"
+  - CLEANUP_SERVICES="APP_ONLY"
+  - CLEANUP_VOLUMES="PRESERVE"
   - *cleanup_script_base
 
 # YAML anchor for Docker installation check pattern
@@ -1041,7 +1041,7 @@ tag_and_merge:
     - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git tagging_repo
     - cd tagging_repo
     
-    # Tag each submodule at locked SHA, and merge to main.
+    # Tag each submodule at locked SHA.
     # We use the SHAs from the submodule_shas.env file,
     - echo "Reading submodule SHAs from submodule_shas.env..."
     - |
@@ -1058,11 +1058,6 @@ tag_and_merge:
         git checkout "$SHA"
         git tag -a "$TAG_VALUE" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
         git push origin "$TAG_VALUE"
-
-        # Merge the tagged commit to main
-        # git checkout main
-        # git merge --no-ff "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
-        # git push origin main
         cd ..
       done
 
@@ -1156,12 +1151,13 @@ merge_assembly_to_main:
   needs:
     - prepare_environment # To get the assembly repo
     - tag_and_merge  # To get the assembly tag
+    - test_all_services  # To get the tag names from dotenv
   script:
 
     # Set strict error handling
     - set -euo pipefail
 
-    - echo "Merging assembly tag $ASSEMBLY_TAG to main branch"
+    - echo "Merging assembly tag $ASSEMBLY_TAG to main branch and submodule tags to main"
 
     # Fresh clone for merging (full depth needed for git operations)
     # Note that we clone into another directory to avoid conflicts,
@@ -1170,13 +1166,30 @@ merge_assembly_to_main:
     - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git merge_repo
     - cd merge_repo
     
-    # Merge the assembly repo's current state/tag to main and push it.
+    # First, merge the submodules to main
+    # Note that we could change this to get the tag names from a dotenv file
+    - echo "Merging submodule tags to main..."
+    - |
+      for name in message-service llm-service frontend; do
+        TAG_VAR_NAME=$(echo "$name" | tr 'a-z-' 'A-Z_' )_TAG
+        TAG_VALUE=$(eval echo \$$TAG_VAR_NAME)
+
+        echo "Merging $name tag $TAG_VALUE to main"
+        cd "$name"
+        git fetch origin
+        git checkout main
+        git merge --no-ff "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
+        git push origin main
+        cd ..
+      done
+    
+    # Then merge the assembly repo's current state/tag to main and push it.
     - git fetch origin main
     - git checkout main
     - git merge --no-ff "$ASSEMBLY_TAG" -m "Merge assembly release $ASSEMBLY_TAG to main"
     - git push origin main
 
-    - echo "Successfully merged assembly tag $ASSEMBLY_TAG to main"
+    - echo "Successfully merged assembly tag $ASSEMBLY_TAG and all submodule tags to main"
 
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
