@@ -1305,7 +1305,6 @@ manual_rollback:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: manual
-      allow_failure: true
 
 
 
