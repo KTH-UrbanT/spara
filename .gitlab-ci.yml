@@ -455,16 +455,16 @@ variables:
   - |
     $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
       set -euo pipefail
-      echo "Stopping spara-postgres container temporarily for restore..."
+      echo "Stopping postgres container temporarily for restore..."
       cd $PRODUCTION_REMOTE_PATH/infra
-      sudo docker compose -f $COMPOSE_FILE_PROD stop spara-postgres || true
+      sudo docker compose -f $COMPOSE_FILE_PROD stop postgres || true
       
-      echo "Starting spara-postgres container for restore..."
-      sudo docker compose -f $COMPOSE_FILE_PROD up -d spara-postgres
+      echo "Starting postgres container for restore..."
+      sudo docker compose -f $COMPOSE_FILE_PROD up -d postgres
       sleep 10
       
       echo "Restoring database from $ROLLBACK_BACKUP_FILE..."
-      sudo docker exec -i spara-postgres psql -U postgres < $ROLLBACK_BACKUP_FILE
+      sudo docker exec -i postgres psql -U postgres < $ROLLBACK_BACKUP_FILE
       
       echo "Database restored successfully"
     EOF
