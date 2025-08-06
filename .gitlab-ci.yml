@@ -480,8 +480,11 @@ variables:
         echo "Postgres container is already running"
       fi
       
+      echo "Dropping existing database before restore..."
+      sudo docker exec -i $POSTGRES_CONTAINER_PROD psql -U postgres -c "DROP DATABASE IF EXISTS message_store;"
+      
       echo "Restoring database from $ROLLBACK_BACKUP_FILE..."
-      sudo docker exec -i $POSTGRES_CONTAINER_PROD psql -U postgres -d message_store < $ROLLBACK_BACKUP_FILE
+      sudo docker exec -i $POSTGRES_CONTAINER_PROD psql -U postgres < $ROLLBACK_BACKUP_FILE
       
       echo "Database restored successfully"
     EOF
