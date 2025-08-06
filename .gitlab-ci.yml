@@ -462,25 +462,34 @@ variables:
   - echo "Using rollback cleanup script to stop failed services"
   - *cleanup_rollback_script
   
-  # Restore database, by first stopping the spara-postgres container,
-  # then starting it again, and finally restoring the database from the backup.
-  # We stop it to ensure no writes are happening during the restore.
+  # Restore database, by first restarting the postgres container to clear all connections,
+  # then dropping and restoring the database from the backup.
+  # We restart to ensure no writes are happening during the restore.
   - echo "=== RESTORING DATABASE ==="
   - echo "Restoring database from backup $ROLLBACK_BACKUP_FILE"
   - |
     $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
       set -euo pipefail
-      echo "Checking if postgres container is running..."
-      if ! sudo docker ps | grep -q $POSTGRES_CONTAINER_PROD; then
-        echo "Starting postgres container for restore..."
-        cd $PRODUCTION_REMOTE_PATH/infra
-        sudo docker compose -f $COMPOSE_FILE_PROD up -d message_store
-        sleep 10
-      else
-        echo "Postgres container is already running"
-      fi
+      echo "Restarting postgres container to clear all connections..."
+      cd $PRODUCTION_REMOTE_PATH/infra
+      sudo docker compose -f $COMPOSE_FILE_PROD restart message_store
+      sleep 15
       
-      echo "Dropping existing database before restore..."
+      echo "Verifying postgres is ready..."
+      for i in {1..30}; do
+        if sudo docker exec $POSTGRES_CONTAINER_PROD pg_isready -U postgres; then
+          echo "Postgres is ready"
+          break
+        fi
+        echo "Waiting for Postgres to be ready... (\$i/30)"
+        sleep 2
+        if [ \$i -eq 30 ]; then
+          echo "Postgres did not become ready in time"
+          exit 1
+        fi
+      done
+      
+      echo "Dropping existing database..."
       sudo docker exec -i $POSTGRES_CONTAINER_PROD psql -U postgres -c "DROP DATABASE IF EXISTS message_store;"
       
       echo "Restoring database from $ROLLBACK_BACKUP_FILE..."
