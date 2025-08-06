@@ -49,6 +49,14 @@ variables:
 
   SSH_GITHUB_PRIVATE_KEY:     $SSH_GITHUB_KEY
   
+  # Container names
+  POSTGRES_CONTAINER_TEST:    spara-postgres-test
+  POSTGRES_CONTAINER_PROD:    spara-postgres
+  
+  # Validation URLs
+  STAGING_VALIDATION_URL:     https://test.sparabot.com/
+  PRODUCTION_VALIDATION_URL:  https://sparabot.com/
+  
   # Tag tracking files for rollback capability
   STAGING_TAG_FILE:                      ${STAGING_REMOTE_PATH}/cicd/last_successful_tag.txt
   PRODUCTION_TAG_FILE:                   ${PRODUCTION_REMOTE_PATH}/cicd/last_successful_tag.txt
@@ -612,9 +620,6 @@ prepare_environment:
     - git clone --depth 1 --shallow-submodules --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git .
     - git checkout "$CI_COMMIT_REF_NAME"
 
-    # Add gitlab as remote for tag cleanup
-    - git remote add gitlab git@gitlab.com:urbant/spara/main.git
-
     # Record exact SHAs of all submodules, as we will use
     # these to tag the submodules later.
     - echo "Recording submodule SHAs..."
@@ -972,7 +977,7 @@ deploy_and_validate_remote_staging:
     - TARGET_BACKUP_ARCHIVE="$STAGING_BACKUP_ARCHIVE"
     - TARGET_REMOTE_PATH="$STAGING_REMOTE_PATH"
     - ENVIRONMENT="staging"
-    - POSTGRES_CONTAINER="spara-postgres-test"
+    - POSTGRES_CONTAINER="$POSTGRES_CONTAINER_TEST"
     - *backup_postgres
 
     # Step 2: Cleanup (remove all services including postgres)
@@ -1006,7 +1011,7 @@ deploy_and_validate_remote_staging:
     - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
 
     # Step 5: Validate Deployment
-    - VALIDATION_URL="https://test.sparabot.com/"
+    - VALIDATION_URL="$STAGING_VALIDATION_URL"
     - *validate_deployment
 
     # Step 6: Record successful deployment tag
@@ -1245,7 +1250,7 @@ deploy_and_validate_remote_production:
     - TARGET_BACKUP_ARCHIVE="$PRODUCTION_BACKUP_ARCHIVE"
     - TARGET_REMOTE_PATH="$PRODUCTION_REMOTE_PATH"
     - ENVIRONMENT="production"
-    - POSTGRES_CONTAINER="spara-postgres"
+    - POSTGRES_CONTAINER="$POSTGRES_CONTAINER_PROD"
     - *backup_postgres
 
     # Step 3: Copy files to production server
@@ -1274,7 +1279,7 @@ deploy_and_validate_remote_production:
     - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_PROD ps"
 
     # Step 5: Validate production deployment
-    - VALIDATION_URL="https://sparabot.com/"
+    - VALIDATION_URL="$PRODUCTION_VALIDATION_URL"
     - *validate_deployment
 
     # Step 6: Record successful production deployment tag
