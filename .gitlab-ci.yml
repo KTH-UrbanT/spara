@@ -455,16 +455,18 @@ variables:
   - |
     $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
       set -euo pipefail
-      echo "Stopping postgres container temporarily for restore..."
-      cd $PRODUCTION_REMOTE_PATH/infra
-      sudo docker compose -f $COMPOSE_FILE_PROD stop postgres || true
-      
-      echo "Starting postgres container for restore..."
-      sudo docker compose -f $COMPOSE_FILE_PROD up -d postgres
-      sleep 10
+      echo "Checking if postgres container is running..."
+      if ! sudo docker ps | grep -q $POSTGRES_CONTAINER_PROD; then
+        echo "Starting postgres container for restore..."
+        cd $PRODUCTION_REMOTE_PATH/infra
+        sudo docker compose -f $COMPOSE_FILE_PROD up -d message_store
+        sleep 10
+      else
+        echo "Postgres container is already running"
+      fi
       
       echo "Restoring database from $ROLLBACK_BACKUP_FILE..."
-      sudo docker exec -i postgres psql -U postgres < $ROLLBACK_BACKUP_FILE
+      sudo docker exec -i $POSTGRES_CONTAINER_PROD psql -U postgres -d message_store < $ROLLBACK_BACKUP_FILE
       
       echo "Database restored successfully"
     EOF
