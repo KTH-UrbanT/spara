@@ -425,9 +425,9 @@ variables:
       echo "Automatic rollback: Going back $ROLLBACK_STEPS deployment to last known good state"
     fi
   
-  # Show available deployment history for context
+  # Show available deployment history
   - echo "Available successful deployment history:"
-  - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "cat $PRODUCTION_TAG_FILE 2>/dev/null | tail -n 5 | nl -v0" || echo "No deployment history found"
+  - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "cat $PRODUCTION_TAG_FILE 2>/dev/null | tail -n 10 | nl -v0" || echo "No deployment history found"
   
   # Get the target successful tag based on rollback steps
   - echo "Retrieving target production tag ($ROLLBACK_STEPS steps back)..."
@@ -504,8 +504,8 @@ variables:
   
   # Parse the tag to get the original assembly tag that was used
   # Format: production-YYYYMMDD-HHMMSS-pipeline_id
-  - ASSEMBLY_PIPELINE_ID=$(echo "$LAST_SUCCESSFUL_TAG" | cut -d'-' -f4)
-  - echo "Looking for assembly tag from pipeline $ASSEMBLY_PIPELINE_ID"
+  #- ASSEMBLY_PIPELINE_ID=$(echo "$LAST_SUCCESSFUL_TAG" | cut -d'-' -f4)
+  #- echo "Looking for assembly tag from pipeline $ASSEMBLY_PIPELINE_ID"
   
   # Clone the repository and checkout the successful tag
   - apk add --no-cache git docker-cli docker-compose
