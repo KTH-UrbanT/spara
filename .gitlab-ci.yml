@@ -483,7 +483,6 @@ variables:
   - echo "Fetching and building application code from tag $LAST_SUCCESSFUL_TAG"
   
   # Clone the repository and checkout the successful tag
-  - apk add --no-cache git docker-cli docker-compose
   - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
   - git clone --recursive git@github.com:KTH-UrbanT/spara.git rollback_repo
   - cd rollback_repo
@@ -503,6 +502,22 @@ variables:
   # Inject .env files (they should be the same)
   - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
   - echo "$LLM_SERVICE_ENV" > llm-service/.env
+  
+  # Wait for Docker daemon to be ready
+  - echo "Waiting for Docker daemon to be ready..."
+  - |
+    for i in {1..30}; do
+      if docker info >/dev/null 2>&1; then
+        echo "Docker daemon is ready"
+        break
+      fi
+      echo "Waiting for Docker daemon... ($i/30)"
+      sleep 2
+      if [ $i -eq 30 ]; then
+        echo "Docker daemon did not become ready in time"
+        exit 1
+      fi
+    done
   
   # Build the Docker images for rollback
   - echo "Building Docker images for rollback..."
