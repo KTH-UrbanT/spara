@@ -1040,9 +1040,9 @@ tag_submodules:
       done
 
     # Tag the assembly repo and push it.
-    - ASSEMBLY_TAG="passed_test-$(date +%Y%m%d-%H%M%S)"
+    - ASSEMBLY_TAG="passed_test-$DEPLOYMENT_TAG"
     - echo "Creating assembly release tag $ASSEMBLY_TAG"
-    - git tag -a "$ASSEMBLY_TAG" -m "Assembly release"
+    - git tag -a "$ASSEMBLY_TAG" -m "Assembly release from pipeline ${CI_PIPELINE_ID}"
     - git push origin "$ASSEMBLY_TAG"
 
     # Export the assembly tag for the manual merge job (manual trigger).
