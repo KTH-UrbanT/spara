@@ -523,10 +523,10 @@ variables:
   - echo "Building Docker images for rollback..."
   - docker compose -f infra/$COMPOSE_FILE_PROD build --no-cache
   
-  # Save images as tar files (using standard names for reusability)
-  - docker save -o message-service-prod.tar spara-message-service:latest
-  - docker save -o llm-service-prod.tar spara-llm-service:latest
-  - docker save -o frontend-prod.tar spara-frontend:latest
+  # Save images as tar files (using correct image names from compose)
+  - docker save -o message-service-prod.tar message-service:prod
+  - docker save -o llm-service-prod.tar llm-service:prod
+  - docker save -o frontend-prod.tar frontend:prod
   - cd ..
   
   # Upload rollback images to production server (reusing standard anchor)
