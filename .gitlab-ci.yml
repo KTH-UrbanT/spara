@@ -1388,7 +1388,7 @@ record_production_success:
 # by restoring the database and deploying the last successful code version.
 automatic_rollback:
   stage: finish_production
-  image: alpine:3.18
+  image: docker:24.0-cli
   resource_group: remote_production
   services:
     - docker:dind
@@ -1413,7 +1413,7 @@ automatic_rollback:
 # by restoring the database and deploying the previous successful code version.
 manual_rollback:
   stage: finish_production
-  image: alpine:3.18
+  image: docker:24.0-cli
   resource_group: remote_production
   services:
     - docker:dind
