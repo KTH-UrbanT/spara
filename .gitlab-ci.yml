@@ -8,19 +8,6 @@
 #
 # Assembly Pipeline
 #
-# This file contains the full pipeline for the assembly process.
-# This includes:
-# - Preparing staging environment (build staging images)
-# - Testing
-# - Deploying to staging
-# - Finishing staging (tagging and merging)
-# - Preparing production environment (build production images)
-# - Deploying to production
-# - Finishing production (rollbacks on failure)
-# - Keeping track of successful deployments
-# - Tagging submodules and assembly repo
-# - Cleanup
-#
 
 stages:
   - prepare_staging
@@ -72,18 +59,9 @@ variables:
 
 # YAML anchor for common cleanup script template - parameterized for staging vs production
 .cleanup_script_base_template: &cleanup_script_base
-  - echo "SSH_CMD=$SSH_CMD"
-  - echo "CLEANUP_USERNAME=$CLEANUP_USERNAME"
-  - echo "CLEANUP_HOST=$CLEANUP_HOST"
-  - echo "CLEANUP_REMOTE_PATH=$CLEANUP_REMOTE_PATH"
-  - echo "CLEANUP_COMPOSE_FILE=$CLEANUP_COMPOSE_FILE"
-  - echo "CLEANUP_ENVIRONMENT=$CLEANUP_ENVIRONMENT"
-  - echo "CLEANUP_SERVICES=$CLEANUP_SERVICES"
-  - echo "CLEANUP_VOLUMES=$CLEANUP_VOLUMES"
   - |
     $SSH_CMD $CLEANUP_USERNAME@$CLEANUP_HOST <<EOF
       set -euxo pipefail
-      #set -euo pipefail
 
       echo "$CLEANUP_ENVIRONMENT cleanup..."
       if [ -d "$CLEANUP_REMOTE_PATH/infra" ] && [ -f "$CLEANUP_REMOTE_PATH/infra/$CLEANUP_COMPOSE_FILE" ]; then
@@ -116,8 +94,6 @@ variables:
           echo "Database and all data volumes have been removed ($CLEANUP_ENVIRONMENT environment)."
         else
           echo "Database service (postgres) and volumes remain untouched."
-          # Optionally clear redis data volume (uncomment if you want to clear redis data)
-          # sudo docker volume rm \$(sudo docker volume ls -q | grep redis) 2>/dev/null || true
         fi
         
         # Remove only Docker image tarballs older than 7 days to free up disk space
@@ -239,7 +215,6 @@ variables:
     fi
   
   # Use rsync for efficient incremental file transfer (SOURCE_PATH allows flexibility for rollback scenarios)
-  # TODO: MAKE USE OF SSH_CMD!!!
   - rsync -az --delete -e "$SSH_CMD" ${SOURCE_PATH:-}infra/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/infra/
 
   - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}message-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service/.env
@@ -257,7 +232,6 @@ variables:
     fi
 
   - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
-  #- rsync -az --delete -e "$SSH_CMD" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
 
 # YAML anchor for backup pattern (creates backup without pruning)
 .backup_postgres_template: &backup_postgres
@@ -508,11 +482,6 @@ variables:
   - echo "=== FETCHING PREVIOUS SUCCESSFUL VERSION ==="
   - echo "Fetching and building application code from tag $LAST_SUCCESSFUL_TAG"
   
-  # Parse the tag to get the original assembly tag that was used
-  # Format: production-YYYYMMDD-HHMMSS-pipeline_id
-  #- ASSEMBLY_PIPELINE_ID=$(echo "$LAST_SUCCESSFUL_TAG" | cut -d'-' -f4)
-  #- echo "Looking for assembly tag from pipeline $ASSEMBLY_PIPELINE_ID"
-  
   # Clone the repository and checkout the successful tag
   - apk add --no-cache git docker-cli docker-compose
   - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
@@ -613,21 +582,6 @@ before_script:
   - ssh-keyscan -H $STAGING_HOST >> ~/.ssh/known_hosts
   - ssh-keyscan -H $PRODUCTION_HOST >> ~/.ssh/known_hosts
 
-  # Print out trusted hosts for debugging
-  #- echo "Trusted hosts:"
-  #- cat ~/.ssh/known_hosts
-
-  # Test connectivity before ssh-keyscan
-  #- echo "Testing connectivity to staging host..."
-  #- nc -zv $STAGING_HOST 22 || echo "Cannot connect to $STAGING_HOST on port 22"
-  #- echo "Testing connectivity to production host..."
-  #- nc -zv $PRODUCTION_HOST 22 || echo "Cannot connect to $PRODUCTION_HOST on port 22"
-
-  #- ssh-keyscan -H github.com >> ~/.ssh/known_hosts
-  # Add timeout and error handling for host key scanning
-  #- timeout 30 ssh-keyscan -H $STAGING_HOST >> ~/.ssh/known_hosts || echo "Failed to get host keys for $STAGING_HOST"
-  #- timeout 30 ssh-keyscan -H $PRODUCTION_HOST >> ~/.ssh/known_hosts || echo "Failed to get host keys for $PRODUCTION_HOST"
-
   # Configure git user for all jobs
   # Note that systems might claim the owner of the SSH key
   # performs these automated actions.
@@ -682,12 +636,6 @@ prepare_environment:
 
   artifacts:
     paths:
-      #- submodule_shas.txt
-      #- message-service/
-      #- llm-service/
-      #- frontend/
-      #- shared/
-      #- infra/
       - ./
     untracked: false
     expire_in: 1 day
@@ -1027,9 +975,7 @@ deploy_and_validate_remote_staging:
     - *load_images
     
     # Run database migrations
-    #- echo "Running database migrations..."
     - export COMPOSE_FILE="$COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI"
-    #- $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration_service alembic upgrade head || true"
 
     # Start the services using Docker Compose with retry logic
     - *deploy_with_retry
@@ -1136,17 +1082,6 @@ tag_submodules:
       else
         echo "No old passed_test-* assembly tags to delete"
       fi
-      
-      # Clean up release-* assembly tags (keep last 10)
-      #ASSEMBLY_RELEASE_TAGS_TO_DELETE=$(git tag -l "release-*" --sort=-creatordate | tail -n +11)
-      #if [ -n "$ASSEMBLY_RELEASE_TAGS_TO_DELETE" ]; then
-      #  echo "Deleting old release-* assembly tags: $ASSEMBLY_RELEASE_TAGS_TO_DELETE"
-      #  for tag in $ASSEMBLY_RELEASE_TAGS_TO_DELETE; do
-      #    git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
-      #  done
-      #else
-      #  echo "No old release-* assembly tags to delete"
-      #fi
 
   artifacts:
     reports:
@@ -1377,15 +1312,11 @@ deploy_and_validate_remote_production:
     - echo "Deploying to production server"
     - *docker_install_check
     - *load_images_prod
-    
-    # Run database migrations
-    #- echo "Running database migrations..."
-    #- $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE exec -T migration_service alembic upgrade head || true"
 
     # Start the services using Docker Compose with retry logic
     - COMPOSE_FILE=$COMPOSE_FILE_PROD
     - *deploy_with_retry
-    
+    #
     # Verify the deployment
     - echo "Verifying production deployment..."
     - sleep 15
@@ -1484,4 +1415,5 @@ manual_rollback:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: manual
+
 
