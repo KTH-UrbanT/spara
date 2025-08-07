@@ -259,7 +259,7 @@ variables:
   - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
   #- rsync -az --delete -e "$SSH_CMD" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
 
-# YAML anchor for backup pattern
+# YAML anchor for backup pattern (creates backup without pruning)
 .backup_postgres_template: &backup_postgres
   - echo "=== BACKUP PHASE ==="
   - echo "Backing up Postgres database with tag-based naming"
@@ -304,9 +304,15 @@ variables:
       fi
     EOF
 
-  # Keep only the last 10 tagged backups
+# YAML anchor for backup cleanup pattern (prunes old backups after successful deployment)
+.cleanup_old_backups_template: &cleanup_old_backups
   - echo "Pruning old tagged Postgres backups, keeping only the last 10..."
   - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "ls -1t $TARGET_BACKUP_ARCHIVE/backup_*.sql | tail -n +11 | xargs -r rm --"
+
+# YAML anchor for failed backup cleanup pattern (removes current backup on deployment failure)
+.cleanup_failed_backup_template: &cleanup_failed_backup
+  - echo "Removing failed deployment backup $BACKUP_FILE..."
+  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "rm -f $BACKUP_FILE || echo 'Backup file already removed or not found'"
 
 # YAML anchor for loading Docker images
 .load_images_template: &load_images
@@ -1037,10 +1043,9 @@ deploy_and_validate_remote_staging:
     - VALIDATION_URL="$STAGING_VALIDATION_URL"
     - *validate_deployment
 
-    # Step 6: Record successful deployment tag
-    - TARGET_TAG_FILE="$STAGING_TAG_FILE"
-    - *record_success
-    
+  artifacts:
+    reports:
+      dotenv: deployment_info.env
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -1133,19 +1138,53 @@ tag_submodules:
       fi
       
       # Clean up release-* assembly tags (keep last 10)
-      ASSEMBLY_RELEASE_TAGS_TO_DELETE=$(git tag -l "release-*" --sort=-creatordate | tail -n +11)
-      if [ -n "$ASSEMBLY_RELEASE_TAGS_TO_DELETE" ]; then
-        echo "Deleting old release-* assembly tags: $ASSEMBLY_RELEASE_TAGS_TO_DELETE"
-        for tag in $ASSEMBLY_RELEASE_TAGS_TO_DELETE; do
-          git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
-        done
-      else
-        echo "No old release-* assembly tags to delete"
-      fi
+      #ASSEMBLY_RELEASE_TAGS_TO_DELETE=$(git tag -l "release-*" --sort=-creatordate | tail -n +11)
+      #if [ -n "$ASSEMBLY_RELEASE_TAGS_TO_DELETE" ]; then
+      #  echo "Deleting old release-* assembly tags: $ASSEMBLY_RELEASE_TAGS_TO_DELETE"
+      #  for tag in $ASSEMBLY_RELEASE_TAGS_TO_DELETE; do
+      #    git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
+      #  done
+      #else
+      #  echo "No old release-* assembly tags to delete"
+      #fi
 
   artifacts:
     reports:
       dotenv: assembly_tag.env
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+# Record Staging Success
+#
+# Records successful staging deployment and cleans up old backups.
+# Only runs after successful staging deployment and validation.
+record_staging_success:
+  stage: finish_staging
+  image: alpine:3.18
+  resource_group: remote_staging
+  interruptible: false  # Don't interrupt success recording once started
+  needs:
+    - deploy_and_validate_remote_staging
+    - prepare_environment  # To get deployment info
+  script:
+    # Set strict error handling
+    - set -euo pipefail
+
+    # Setup SSH and variables
+    - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
+    - TARGET_USERNAME="$STAGING_USERNAME"
+    - TARGET_HOST="$STAGING_HOST"
+    - TARGET_BACKUP_ARCHIVE="$STAGING_BACKUP_ARCHIVE"
+    - TARGET_TAG_FILE="$STAGING_TAG_FILE"
+    - ENVIRONMENT="staging"
+    - CURRENT_ASSEMBLY_TAG="$ENVIRONMENT-$DEPLOYMENT_TAG"
+
+    # Record successful deployment tag
+    - *record_success
+
+    # Clean up old backups now that deployment is confirmed successful
+    - *cleanup_old_backups
+
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -1159,9 +1198,60 @@ cleanup_on_failure:
   image: alpine:3.18
   resource_group: remote_staging
   interruptible: false  # Don't interrupt cleanup once started
+  needs:
+    - deploy_and_validate_remote_staging
+    - prepare_environment  # To get deployment info
   script: 
+    # Set strict error handling
+    - set -euo pipefail
+
+    # Setup SSH and variables for cleanup
     - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
+    - TARGET_USERNAME="$STAGING_USERNAME"
+    - TARGET_HOST="$STAGING_HOST"
+    - TARGET_BACKUP_ARCHIVE="$STAGING_BACKUP_ARCHIVE"
+    - ENVIRONMENT="staging"
+    - CURRENT_ASSEMBLY_TAG="$ENVIRONMENT-$DEPLOYMENT_TAG"
+    - BACKUP_FILE="$TARGET_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
+
+    # Clean up staging environment
     - *cleanup_staging_script
+
+    # Remove the failed deployment backup
+    - *cleanup_failed_backup
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+      when: on_failure
+
+# Cleanup Production On Failure
+#
+# Cleanup job that runs only on production deployment failure.
+# Removes the failed backup and optionally cleans up failed deployment artifacts.
+cleanup_production_on_failure:
+  stage: finish_production
+  image: alpine:3.18
+  resource_group: remote_production
+  interruptible: false  # Don't interrupt cleanup once started
+  needs:
+    - deploy_and_validate_remote_production
+    - prepare_environment  # To get deployment info
+  script: 
+    # Set strict error handling
+    - set -euo pipefail
+
+    # Setup SSH and variables for cleanup
+    - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
+    - TARGET_USERNAME="$PRODUCTION_USERNAME"
+    - TARGET_HOST="$PRODUCTION_HOST"
+    - TARGET_BACKUP_ARCHIVE="$PRODUCTION_BACKUP_ARCHIVE"
+    - ENVIRONMENT="production"
+    - CURRENT_ASSEMBLY_TAG="$ENVIRONMENT-$DEPLOYMENT_TAG"
+    - BACKUP_FILE="$TARGET_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
+
+    # Remove the failed deployment backup
+    - *cleanup_failed_backup
+
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: on_failure
@@ -1305,10 +1395,43 @@ deploy_and_validate_remote_production:
     - VALIDATION_URL="$PRODUCTION_VALIDATION_URL"
     - *validate_deployment
 
-    # Step 6: Record successful production deployment tag
+  artifacts:
+    reports:
+      dotenv: deployment_info.env
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+
+# Record Production Success
+#
+# Records successful production deployment and cleans up old backups.
+# Only runs after successful production deployment and validation.
+record_production_success:
+  stage: finish_production
+  image: alpine:3.18
+  resource_group: remote_production
+  interruptible: false  # Don't interrupt success recording once started
+  needs:
+    - deploy_and_validate_remote_production
+    - prepare_environment  # To get deployment info
+  script:
+    # Set strict error handling
+    - set -euo pipefail
+
+    # Setup SSH and variables
+    - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
+    - TARGET_USERNAME="$PRODUCTION_USERNAME"
+    - TARGET_HOST="$PRODUCTION_HOST"
+    - TARGET_BACKUP_ARCHIVE="$PRODUCTION_BACKUP_ARCHIVE"
     - TARGET_TAG_FILE="$PRODUCTION_TAG_FILE"
+    - ENVIRONMENT="production"
+    - CURRENT_ASSEMBLY_TAG="$ENVIRONMENT-$DEPLOYMENT_TAG"
+
+    # Record successful deployment tag
     - *record_success
-    
+
+    # Clean up old backups now that deployment is confirmed successful
+    - *cleanup_old_backups
+
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
 
@@ -1361,9 +1484,4 @@ manual_rollback:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\//'
       when: manual
-
-
-
-
-
 
