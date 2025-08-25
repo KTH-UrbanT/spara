@@ -23,3 +23,11 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL,
     sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS ratings (
+    rating_id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
+    rating FLOAT,
+    message TEXT NOT NULL,
+    version TEXT
+);
