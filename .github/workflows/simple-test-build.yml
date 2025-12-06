@@ -1,6 +1,5 @@
 name: Build Docker Images
 
-# Change this to 'test/**' for testing phase, or 'dev' for production phase
 on:
   push:
     branches:
@@ -18,15 +17,24 @@ jobs:
       packages: write
     
     steps:
-      # Step 1: Checkout main repository (without submodules first)
+      # Step 1: Checkout main repository
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
       
-      # Step 2: Configure git to use HTTPS instead of SSH for GitHub
-      # This converts git@github.com: to https://github.com/
-      - name: Configure git for HTTPS submodules
+      # Step 2: Configure git to use HTTPS with authentication
+      - name: Configure git for authenticated HTTPS submodules
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Configure git to use HTTPS instead of SSH
           git config --global url."https://github.com/".insteadOf git@github.com:
+          
+          # Configure git to use the token for authentication
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          
+          # Now initialize submodules
           git submodule sync
           git submodule update --init --recursive
       
