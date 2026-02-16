@@ -1,46 +1,46 @@
-stages:
-  - build
-  - deploy
+stages: [deploy]
 
 variables:
-  DOCKER_IMAGE: spara:latest
-  SSH_HOST: oden.abe.kth.se
-  SSH_USER: oleksii
-  DEPLOY_PATH: /spara
+  DEPLOY_ROOT: "/home/gitlab-runner/spara-deploy"
+  WORKDIR: "$DEPLOY_ROOT/current"
 
-before_script:
-  - mkdir -p ~/.ssh
-  - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-  - chmod 600 ~/.ssh/id_rsa
-  - ssh-keyscan -H $SSH_HOST >> ~/.ssh/known_hosts
-
-build:
-  stage: build
-  image: docker:latest
-  services:
-    - docker:dind
-  script:
-    # Build Docker image
-    - docker build -t $DOCKER_IMAGE .
-
-deploy:
+deploy_test:
   stage: deploy
+  tags:
+    - sciencecloud
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test(\/.+)?$/'
+      when: on_success
+    - when: never
+
   script:
-    # Push Docker image to the server (optional if server pulls image directly)
-    - |
-      ssh $SSH_USER@$SSH_HOST << EOF
-      mkdir -p $DEPLOY_PATH
-      EOF
+    - set -euo pipefail
 
-    # Transfer docker-compose.yml or deployment files
-    - scp docker-compose.yml $SSH_USER@$SSH_HOST:$DEPLOY_PATH/
+    - echo "Deploying commit $CI_COMMIT_SHA from branch $CI_COMMIT_BRANCH"
 
-    # Run Docker Compose on the server
-    - |
-      ssh $SSH_USER@$SSH_HOST << EOF
-      cd $DEPLOY_PATH
-      docker-compose pull
-      docker-compose up -d --build
-      EOF
-  only:
-    - main # Run deployment only on the main branch
+    # Prepare workspace
+    - mkdir -p "$WORKDIR"
+    - rm -rf "$WORKDIR"/*
+    - cp -a . "$WORKDIR"
+
+    # Pull submodules at the exact commit recorded in repo
+    - cd "$WORKDIR"
+    - git submodule sync --recursive || true
+    - git submodule update --init --recursive
+
+    # Write env files from GitLab variables
+    - printf "%s" "$MESSAGE_ENV_FILE" > "$WORKDIR/message-service/.env"
+    - printf "%s" "$LLM_ENV_FILE"     > "$WORKDIR/llm-service/.env"
+    - chmod 600 "$WORKDIR/message-service/.env" "$WORKDIR/llm-service/.env"
+
+    # Ensure docker network exists
+    - docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
+
+    # Deploy
+    - cd "$WORKDIR/infra"
+    - docker compose -f docker-compose.test.yml build --no-cache
+    - docker compose -f docker-compose.test.yml up -d --force-recreate
+
+    # Show running containers
+    - docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
