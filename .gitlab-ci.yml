@@ -1,46 +1,51 @@
-stages:
-  - build
-  - deploy
+
+stages: [deploy]
 
 variables:
-  DOCKER_IMAGE: spara:latest
-  SSH_HOST: oden.abe.kth.se
-  SSH_USER: oleksii
-  DEPLOY_PATH: /spara
+  DEPLOY_ROOT: "/home/gitlab-runner/spara-deploy"
+  # This is the folder layout your compose expects (../frontend etc.)
+  WORKDIR: "$DEPLOY_ROOT/current"
 
-before_script:
-  - mkdir -p ~/.ssh
-  - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-  - chmod 600 ~/.ssh/id_rsa
-  - ssh-keyscan -H $SSH_HOST >> ~/.ssh/known_hosts
-
-build:
-  stage: build
-  image: docker:latest
-  services:
-    - docker:dind
-  script:
-    # Build Docker image
-    - docker build -t $DOCKER_IMAGE .
-
-deploy:
+deploy_test:
   stage: deploy
+  tags:
+    - sciencecloud
+  when: manual
   script:
-    # Push Docker image to the server (optional if server pulls image directly)
-    - |
-      ssh $SSH_USER@$SSH_HOST << EOF
-      mkdir -p $DEPLOY_PATH
-      EOF
+    - set -euo pipefail
 
-    # Transfer docker-compose.yml or deployment files
-    - scp docker-compose.yml $SSH_USER@$SSH_HOST:$DEPLOY_PATH/
+    # 1) Show what refs we're deploying (good for logs)
+    - echo "Deploying refs:"
+    - echo "  FRONTEND_REF=$FRONTEND_REF"
+    - echo "  MESSAGE_REF=$MESSAGE_REF"
+    - echo "  LLM_REF=$LLM_REF"
 
-    # Run Docker Compose on the server
-    - |
-      ssh $SSH_USER@$SSH_HOST << EOF
-      cd $DEPLOY_PATH
-      docker-compose pull
-      docker-compose up -d --build
-      EOF
-  only:
-    - main # Run deployment only on the main branch
+    # 2) Prepare folder structure
+    - mkdir -p "$WORKDIR"
+    - rm -rf "$WORKDIR/frontend" "$WORKDIR/message-service" "$WORKDIR/llm-service"
+    - mkdir -p "$WORKDIR"
+
+    # 3) Copy infra + shared from THIS repo into the workdir
+    - rm -rf "$WORKDIR/infra" "$WORKDIR/shared"
+    - cp -a infra "$WORKDIR/infra"
+    - cp -a shared "$WORKDIR/shared"
+
+    # 4) Clone the 3 repos at the chosen refs
+    - git clone --depth 1 --branch "$FRONTEND_REF" "$FRONTEND_REPO" "$WORKDIR/frontend"
+    - git clone --depth 1 --branch "$MESSAGE_REF"  "$MESSAGE_REPO"  "$WORKDIR/message-service"
+    - git clone --depth 1 --branch "$LLM_REF"      "$LLM_REPO"      "$WORKDIR/llm-service"
+
+    # 5) Write env files from GitLab variables
+    - printf "%s" "$MESSAGE_ENV_FILE" > "$WORKDIR/message-service/.env"
+    - printf "%s" "$LLM_ENV_FILE"     > "$WORKDIR/llm-service/.env"
+    - chmod 600 "$WORKDIR/message-service/.env" "$WORKDIR/llm-service/.env"
+
+    # 6) Ensure the external docker network exists (your compose requires it)
+    - docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
+
+    # 7) Bring up the stack (adjust filename if needed)
+    - cd "$WORKDIR/infra"
+    - docker compose -f docker-compose.test.yml up -d --build
+
+    # 8) Show result
+    - docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
