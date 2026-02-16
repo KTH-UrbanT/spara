@@ -45,7 +45,8 @@ deploy_test:
 
     # 7) Bring up the stack (adjust filename if needed)
     - cd "$WORKDIR/infra"
-    - docker compose -f docker-compose.test.yml up -d --build
+    - docker compose -f docker-compose.test.yml build --no-cache
+    - docker compose -f docker-compose.test.yml up -d --force-recreate
 
     # 8) Show result
     - docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
