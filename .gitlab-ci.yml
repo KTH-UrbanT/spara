@@ -1,3 +1,9 @@
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: always
+    - when: never
+
 stages: [deploy]
 
 variables:
@@ -7,10 +13,13 @@ variables:
 deploy_test:
   stage: deploy
   tags: [sciencecloud]
+
+  # Only deploy if this branch equals the selected branch variable
   rules:
     - if: '$CI_COMMIT_BRANCH == $DEPLOY_TEST_BRANCH'
       when: on_success
     - when: never
+
   script:
     - echo "DEPLOY_TEST_BRANCH=$DEPLOY_TEST_BRANCH"
     - echo "CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH"
