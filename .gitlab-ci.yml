@@ -15,6 +15,7 @@ deploy_test:
   stage: deploy
   tags: [sciencecloud]
 
+  # Only allow manual deploy when branch matches selected branch variable
   rules:
     - if: '$CI_COMMIT_BRANCH == $DEPLOY_TEST_BRANCH'
       when: manual
@@ -22,8 +23,11 @@ deploy_test:
 
   script:
     - set -euo pipefail
+
     - echo "DEPLOY_TEST_BRANCH=$DEPLOY_TEST_BRANCH"
     - echo "CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH"
+
+    # Fail early if variable missing or mismatch
     - test -n "$DEPLOY_TEST_BRANCH"
     - test "$CI_COMMIT_BRANCH" = "$DEPLOY_TEST_BRANCH"
 
@@ -36,7 +40,7 @@ deploy_test:
     # Copy repo WITHOUT .git (prevents permission errors)
     - rsync -a --delete --exclude='.git' ./ "$WORKDIR"/
 
-    # Submodules (safe even if you don't use them)
+    # Submodules (safe even if unused)
     - cd "$WORKDIR"
     - git submodule sync --recursive || true
     - git submodule update --init --recursive || true
@@ -49,9 +53,10 @@ deploy_test:
     # Ensure docker network exists
     - docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
 
-    # Deploy
+    # Deploy containers
     - cd "$WORKDIR/infra"
     - docker compose -f docker-compose.test.yml build --no-cache
     - docker compose -f docker-compose.test.yml up -d --force-recreate
 
+    # Show result
     - docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
