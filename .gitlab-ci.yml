@@ -15,18 +15,15 @@ deploy_test:
   stage: deploy
   tags: [sciencecloud]
 
-  # Deploy ONLY if this test/* branch matches the configured deploy branch
   rules:
     - if: '$CI_COMMIT_BRANCH == $DEPLOY_TEST_BRANCH'
-      when: on_success
+      when: manual
     - when: never
 
   script:
     - set -euo pipefail
     - echo "DEPLOY_TEST_BRANCH=$DEPLOY_TEST_BRANCH"
     - echo "CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH"
-
-    # Guard: fail loudly if variable isn't set/matching
     - test -n "$DEPLOY_TEST_BRANCH"
     - test "$CI_COMMIT_BRANCH" = "$DEPLOY_TEST_BRANCH"
 
