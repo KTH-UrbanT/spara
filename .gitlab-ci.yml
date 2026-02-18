@@ -1,5 +1,6 @@
 workflow:
   rules:
+    # Create a pipeline for ANY test/* branch push
     - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
       when: always
     - when: never
@@ -14,13 +15,20 @@ deploy_test:
   stage: deploy
   tags: [sciencecloud]
 
+  # Deploy ONLY if this test/* branch matches the configured deploy branch
   rules:
-    - if: '$CI_COMMIT_BRANCH == "test/agentic_system"'
+    - if: '$CI_COMMIT_BRANCH == $DEPLOY_TEST_BRANCH'
       when: on_success
     - when: never
 
   script:
     - set -euo pipefail
+    - echo "DEPLOY_TEST_BRANCH=$DEPLOY_TEST_BRANCH"
+    - echo "CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH"
+
+    # Guard: fail loudly if variable isn't set/matching
+    - test -n "$DEPLOY_TEST_BRANCH"
+    - test "$CI_COMMIT_BRANCH" = "$DEPLOY_TEST_BRANCH"
 
     - echo "Deploying commit $CI_COMMIT_SHA from branch $CI_COMMIT_BRANCH"
 
@@ -28,10 +36,10 @@ deploy_test:
     - mkdir -p "$WORKDIR"
     - rm -rf "$WORKDIR"/*
 
-    # Copy repo WITHOUT .git (prevents permission error)
+    # Copy repo WITHOUT .git (prevents permission errors)
     - rsync -a --delete --exclude='.git' ./ "$WORKDIR"/
 
-    # (Optional) Submodules if you use them
+    # Submodules (safe even if you don't use them)
     - cd "$WORKDIR"
     - git submodule sync --recursive || true
     - git submodule update --init --recursive || true
@@ -49,5 +57,4 @@ deploy_test:
     - docker compose -f docker-compose.test.yml build --no-cache
     - docker compose -f docker-compose.test.yml up -d --force-recreate
 
-    # Show running containers
     - docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
