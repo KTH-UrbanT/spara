@@ -14,16 +14,10 @@ deploy_test:
   stage: deploy
   tags: [sciencecloud]
 
-  # Only deploy if this branch equals the selected branch variable
   rules:
-    - if: '$CI_COMMIT_BRANCH == $DEPLOY_TEST_BRANCH'
+    - if: '$CI_COMMIT_BRANCH == "test/agentic_system"'
       when: on_success
     - when: never
-
-  script:
-    - echo "DEPLOY_TEST_BRANCH=$DEPLOY_TEST_BRANCH"
-    - echo "CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH"
-    - test "$CI_COMMIT_BRANCH" = "$DEPLOY_TEST_BRANCH"
 
   script:
     - set -euo pipefail
@@ -33,12 +27,14 @@ deploy_test:
     # Prepare workspace
     - mkdir -p "$WORKDIR"
     - rm -rf "$WORKDIR"/*
-    - cp -a . "$WORKDIR"
 
-    # Pull submodules at the exact commit recorded in repo
+    # Copy repo WITHOUT .git (prevents permission error)
+    - rsync -a --delete --exclude='.git' ./ "$WORKDIR"/
+
+    # (Optional) Submodules if you use them
     - cd "$WORKDIR"
     - git submodule sync --recursive || true
-    - git submodule update --init --recursive
+    - git submodule update --init --recursive || true
 
     # Write env files from GitLab variables
     - printf "%s" "$MESSAGE_ENV_FILE" > "$WORKDIR/message-service/.env"
