@@ -40,10 +40,15 @@ deploy_test:
     # Copy repo WITHOUT .git (prevents permission errors)
     - rsync -a --delete --exclude='.git' ./ "$WORKDIR"/
 
-    # Submodules (safe even if unused)
+    # Configure GitHub token for private submodules (HTTPS)
+    - test -n "$GITHUB_TOKEN"
+    - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+    - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+
+    # Submodules
     - cd "$WORKDIR"
     - git submodule sync --recursive || true
-    - git submodule update --init --recursive || true
+    - git submodule update --init --recursive
 
     # Write env files from GitLab variables
     - printf "%s" "$MESSAGE_ENV_FILE" > "$WORKDIR/message-service/.env"
