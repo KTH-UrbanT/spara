@@ -23,36 +23,46 @@ prepare_environment:
     - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
       when: on_success
     - when: never
-
   script:
-    - set -euo pipefail
-    - echo "Preparing environment for branch $CI_COMMIT_BRANCH"
-    - echo "Commit: $CI_COMMIT_SHA"
-    - echo "Pipeline: $CI_PIPELINE_ID"
-    - mkdir -p "$CI_WORKDIR"
-    - rm -rf "$CI_WORKDIR"/*
-    - rsync -a --delete --exclude='.git' ./ "$CI_WORKDIR"/
-    - test -n "$GITHUB_TOKEN"
-    - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
-    - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
-    - cd "$CI_WORKDIR"
-    - git submodule sync --recursive || true
-    - git submodule update --init --recursive || true
-    - git submodule status > submodule_shas.env || true
-    - cat submodule_shas.env || true
-    - printf "%s" "$MESSAGE_ENV_FILE" > "$CI_WORKDIR/message-service/.env"
-    - printf "%s" "$LLM_ENV_FILE" > "$CI_WORKDIR/llm-service/.env"
-    - mkdir -p "$CI_WORKDIR/frontend"
-    - printf "%s\n" "${FRONTEND_ENV_FILE:-}" > "$CI_WORKDIR/frontend/.env"
-    - DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - printf "VITE_DEPLOYMENT_TAG=%s\n" "$DEPLOYMENT_TAG" >> "$CI_WORKDIR/frontend/.env"
-    - printf "VITE_BUILD_TIME=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$CI_WORKDIR/frontend/.env"
-    - printf "VITE_COMMIT_SHA=%s\n" "$CI_COMMIT_SHA" >> "$CI_WORKDIR/frontend/.env"
-    - printf "VITE_BRANCH=%s\n" "$CI_COMMIT_BRANCH" >> "$CI_WORKDIR/frontend/.env"
-    - chmod 600 "$CI_WORKDIR/message-service/.env" "$CI_WORKDIR/llm-service/.env" "$CI_WORKDIR/frontend/.env"
-    - echo "Frontend deployment metadata:"
-    - grep '^VITE_' "$CI_WORKDIR/frontend/.env"
+    - |
+      set -euo pipefail
 
+      echo "Preparing environment for branch $CI_COMMIT_BRANCH"
+      echo "Commit: $CI_COMMIT_SHA"
+      echo "Pipeline: $CI_PIPELINE_ID"
+
+      mkdir -p "$CI_WORKDIR"
+      rm -rf "$CI_WORKDIR"/*
+
+      rsync -a --delete --exclude='.git' ./ "$CI_WORKDIR"/
+
+      test -n "$GITHUB_TOKEN"
+      git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+      git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+
+      cd "$CI_WORKDIR"
+      git submodule sync --recursive || true
+      git submodule update --init --recursive || true
+
+      git submodule status > submodule_shas.env || true
+      cat submodule_shas.env || true
+
+      printf "%s" "$MESSAGE_ENV_FILE" > "$CI_WORKDIR/message-service/.env"
+      printf "%s" "$LLM_ENV_FILE" > "$CI_WORKDIR/llm-service/.env"
+
+      mkdir -p "$CI_WORKDIR/frontend"
+      printf "%s\n" "${FRONTEND_ENV_FILE:-}" > "$CI_WORKDIR/frontend/.env"
+
+      DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      printf "VITE_DEPLOYMENT_TAG=%s\n" "$DEPLOYMENT_TAG" >> "$CI_WORKDIR/frontend/.env"
+      printf "VITE_BUILD_TIME=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$CI_WORKDIR/frontend/.env"
+      printf "VITE_COMMIT_SHA=%s\n" "$CI_COMMIT_SHA" >> "$CI_WORKDIR/frontend/.env"
+      printf "VITE_BRANCH=%s\n" "$CI_COMMIT_BRANCH" >> "$CI_WORKDIR/frontend/.env"
+
+      chmod 600 "$CI_WORKDIR/message-service/.env" "$CI_WORKDIR/llm-service/.env" "$CI_WORKDIR/frontend/.env"
+
+      echo "Frontend deployment metadata:"
+      grep '^VITE_' "$CI_WORKDIR/frontend/.env"
   artifacts:
     paths:
       - .ci-workdir/
@@ -69,11 +79,11 @@ build_message_service:
     - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
       when: on_success
     - when: never
-
   script:
-    - set -euo pipefail
-    - cd "$CI_WORKDIR/infra"
-    - docker compose -f "$COMPOSE_FILE_TEST" build --no-cache message-service
+    - |
+      set -euo pipefail
+      cd "$CI_WORKDIR/infra"
+      docker compose -f "$COMPOSE_FILE_TEST" build --no-cache message-service
 
 build_llm_service:
   stage: build
@@ -86,11 +96,11 @@ build_llm_service:
     - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
       when: on_success
     - when: never
-
   script:
-    - set -euo pipefail
-    - cd "$CI_WORKDIR/infra"
-    - docker compose -f "$COMPOSE_FILE_TEST" build --no-cache llm-service
+    - |
+      set -euo pipefail
+      cd "$CI_WORKDIR/infra"
+      docker compose -f "$COMPOSE_FILE_TEST" build --no-cache llm-service
 
 build_frontend:
   stage: build
@@ -103,11 +113,11 @@ build_frontend:
     - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
       when: on_success
     - when: never
-
   script:
-    - set -euo pipefail
-    - cd "$CI_WORKDIR/infra"
-    - docker compose -f "$COMPOSE_FILE_TEST" build --no-cache frontend
+    - |
+      set -euo pipefail
+      cd "$CI_WORKDIR/infra"
+      docker compose -f "$COMPOSE_FILE_TEST" build --no-cache frontend
 
 test_all_services:
   stage: test
@@ -123,14 +133,16 @@ test_all_services:
     - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
       when: on_success
     - when: never
-
   script:
-    - set -euo pipefail
-    - docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
-    - cd "$CI_WORKDIR/infra"
-    - docker compose -f "$COMPOSE_FILE_TEST" down --remove-orphans || true
-    - docker compose -f "$COMPOSE_FILE_TEST" up -d redis message_store
     - |
+      set -euo pipefail
+
+      docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
+
+      cd "$CI_WORKDIR/infra"
+      docker compose -f "$COMPOSE_FILE_TEST" down --remove-orphans || true
+      docker compose -f "$COMPOSE_FILE_TEST" up -d redis message_store
+
       for i in $(seq 1 30); do
         if docker compose -f "$COMPOSE_FILE_TEST" exec -T message_store pg_isready -U postgres >/dev/null 2>&1; then
           echo "Postgres is ready"
@@ -143,16 +155,20 @@ test_all_services:
           exit 1
         fi
       done
-    - echo "Testing message-service..."
-    - docker compose -f "$COMPOSE_FILE_TEST" up -d message-service
-    - docker compose -f "$COMPOSE_FILE_TEST" exec -T message-service bash -lc 'if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo "No tests directory found in message-service"; exit 1; fi'
-    - echo "Testing llm-service..."
-    - docker compose -f "$COMPOSE_FILE_TEST" up -d llm-service
-    - docker compose -f "$COMPOSE_FILE_TEST" exec -T llm-service bash -lc 'if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo "No tests directory found in llm-service"; exit 1; fi'
-    - echo "Testing frontend startup..."
-    - docker compose -f "$COMPOSE_FILE_TEST" up -d frontend
-    - docker compose -f "$COMPOSE_FILE_TEST" ps
-    - docker compose -f "$COMPOSE_FILE_TEST" down --remove-orphans || true
+
+      echo "Testing message-service..."
+      docker compose -f "$COMPOSE_FILE_TEST" up -d message-service
+      docker compose -f "$COMPOSE_FILE_TEST" exec -T message-service bash -lc 'if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo "No tests directory found in message-service"; exit 1; fi'
+
+      echo "Testing llm-service..."
+      docker compose -f "$COMPOSE_FILE_TEST" up -d llm-service
+      docker compose -f "$COMPOSE_FILE_TEST" exec -T llm-service bash -lc 'if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo "No tests directory found in llm-service"; exit 1; fi'
+
+      echo "Testing frontend startup..."
+      docker compose -f "$COMPOSE_FILE_TEST" up -d frontend
+      docker compose -f "$COMPOSE_FILE_TEST" ps
+
+      docker compose -f "$COMPOSE_FILE_TEST" down --remove-orphans || true
 
 deploy_and_validate_remote_staging:
   stage: deploy_staging
@@ -166,15 +182,19 @@ deploy_and_validate_remote_staging:
     - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
       when: on_success
     - when: never
-
   script:
-    - set -euo pipefail
-    - echo "Deploying tested branch $CI_COMMIT_BRANCH"
-    - echo "Commit: $CI_COMMIT_SHA"
-    - docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
-    - cd "$CI_WORKDIR/infra"
-    - docker compose -f "$COMPOSE_FILE_TEST" down --remove-orphans || true
-    - docker compose -f "$COMPOSE_FILE_TEST" build --no-cache
-    - docker compose -f "$COMPOSE_FILE_TEST" up -d --force-recreate
-    - docker compose -f "$COMPOSE_FILE_TEST" ps
-    - docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+    - |
+      set -euo pipefail
+
+      echo "Deploying tested branch $CI_COMMIT_BRANCH"
+      echo "Commit: $CI_COMMIT_SHA"
+
+      docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
+
+      cd "$CI_WORKDIR/infra"
+      docker compose -f "$COMPOSE_FILE_TEST" down --remove-orphans || true
+      docker compose -f "$COMPOSE_FILE_TEST" build --no-cache
+      docker compose -f "$COMPOSE_FILE_TEST" up -d --force-recreate
+
+      docker compose -f "$COMPOSE_FILE_TEST" ps
+      docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
