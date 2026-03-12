@@ -5,7 +5,8 @@ workflow:
       when: always
     - when: never
 
-stages: [deploy]
+stages:
+  - deploy
 
 variables:
   DEPLOY_ROOT: "/home/gitlab-runner/spara-deploy"
@@ -13,31 +14,29 @@ variables:
 
 deploy_test:
   stage: deploy
-  tags: [sciencecloud]
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
 
-  # Only allow manual deploy when branch matches selected branch variable
+  # Auto-deploy on every push to any test/* branch
   rules:
-    - if: '$CI_COMMIT_BRANCH == $DEPLOY_TEST_BRANCH'
-      when: manual
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
     - when: never
 
   script:
     - set -euo pipefail
 
-    - echo "DEPLOY_TEST_BRANCH=$DEPLOY_TEST_BRANCH"
     - echo "CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH"
-
-    # Fail early if variable missing or mismatch
-    - test -n "$DEPLOY_TEST_BRANCH"
-    - test "$CI_COMMIT_BRANCH" = "$DEPLOY_TEST_BRANCH"
-
+    - echo "CI_COMMIT_SHA=$CI_COMMIT_SHA"
+    - echo "CI_PIPELINE_ID=$CI_PIPELINE_ID"
     - echo "Deploying commit $CI_COMMIT_SHA from branch $CI_COMMIT_BRANCH"
 
     # Prepare workspace
     - mkdir -p "$WORKDIR"
     - rm -rf "$WORKDIR"/*
 
-    # Copy repo WITHOUT .git (prevents permission errors)
+    # Copy repo WITHOUT .git
     - rsync -a --delete --exclude='.git' ./ "$WORKDIR"/
 
     # Configure GitHub token for private submodules (HTTPS)
@@ -48,12 +47,26 @@ deploy_test:
     # Submodules
     - cd "$WORKDIR"
     - git submodule sync --recursive || true
-    - git submodule update --init --recursive
+    - git submodule update --init --recursive || true
 
-    # Write env files from GitLab variables
+    # Write backend env files from GitLab variables
     - printf "%s" "$MESSAGE_ENV_FILE" > "$WORKDIR/message-service/.env"
-    - printf "%s" "$LLM_ENV_FILE"     > "$WORKDIR/llm-service/.env"
-    - chmod 600 "$WORKDIR/message-service/.env" "$WORKDIR/llm-service/.env"
+    - printf "%s" "$LLM_ENV_FILE" > "$WORKDIR/llm-service/.env"
+
+    # Write frontend env file and inject deployment metadata for UI
+    - mkdir -p "$WORKDIR/frontend"
+    - printf "%s\n" "${FRONTEND_ENV_FILE:-}" > "$WORKDIR/frontend/.env"
+    - DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+    - printf "VITE_DEPLOYMENT_TAG=%s\n" "$DEPLOYMENT_TAG" >> "$WORKDIR/frontend/.env"
+    - printf "VITE_BUILD_TIME=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$WORKDIR/frontend/.env"
+    - printf "VITE_COMMIT_SHA=%s\n" "$CI_COMMIT_SHA" >> "$WORKDIR/frontend/.env"
+    - printf "VITE_BRANCH=%s\n" "$CI_COMMIT_BRANCH" >> "$WORKDIR/frontend/.env"
+
+    - chmod 600 "$WORKDIR/message-service/.env" "$WORKDIR/llm-service/.env" "$WORKDIR/frontend/.env"
+
+    # Optional debug output for frontend deployment info
+    - echo "Frontend deployment metadata:"
+    - grep '^VITE_' "$WORKDIR/frontend/.env"
 
     # Ensure docker network exists
     - docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
