@@ -12,7 +12,7 @@ stages:
 
 variables:
   COMPOSE_FILE_TEST: "docker-compose.test.yml"
-  CI_WORKDIR: "$CI_PROJECT_DIR/.ci-workdir"
+  GIT_SUBMODULE_STRATEGY: recursive
 
 prepare_environment:
   stage: prepare
@@ -31,41 +31,47 @@ prepare_environment:
       echo "Commit: $CI_COMMIT_SHA"
       echo "Pipeline: $CI_PIPELINE_ID"
 
-      mkdir -p "$CI_WORKDIR"
-      rm -rf "$CI_WORKDIR"/*
-
-      rsync -a --delete --exclude='.git' ./ "$CI_WORKDIR"/
-
       test -n "$GITHUB_TOKEN"
       git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
       git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
 
-      cd "$CI_WORKDIR"
-      git submodule sync --recursive || true
-      git submodule update --init --recursive || true
+      git submodule sync --recursive
+      git submodule update --init --recursive
 
       git submodule status > submodule_shas.env || true
       cat submodule_shas.env || true
 
-      printf "%s" "$MESSAGE_ENV_FILE" > "$CI_WORKDIR/message-service/.env"
-      printf "%s" "$LLM_ENV_FILE" > "$CI_WORKDIR/llm-service/.env"
+      printf "%s" "$MESSAGE_ENV_FILE" > "$CI_PROJECT_DIR/message-service/.env"
+      printf "%s" "$LLM_ENV_FILE" > "$CI_PROJECT_DIR/llm-service/.env"
 
-      mkdir -p "$CI_WORKDIR/frontend"
-      printf "%s\n" "${FRONTEND_ENV_FILE:-}" > "$CI_WORKDIR/frontend/.env"
+      mkdir -p "$CI_PROJECT_DIR/frontend"
+      printf "%s\n" "${FRONTEND_ENV_FILE:-}" > "$CI_PROJECT_DIR/frontend/.env"
 
       DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-      printf "VITE_DEPLOYMENT_TAG=%s\n" "$DEPLOYMENT_TAG" >> "$CI_WORKDIR/frontend/.env"
-      printf "VITE_BUILD_TIME=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$CI_WORKDIR/frontend/.env"
-      printf "VITE_COMMIT_SHA=%s\n" "$CI_COMMIT_SHA" >> "$CI_WORKDIR/frontend/.env"
-      printf "VITE_BRANCH=%s\n" "$CI_COMMIT_BRANCH" >> "$CI_WORKDIR/frontend/.env"
+      printf "VITE_DEPLOYMENT_TAG=%s\n" "$DEPLOYMENT_TAG" >> "$CI_PROJECT_DIR/frontend/.env"
+      printf "VITE_BUILD_TIME=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$CI_PROJECT_DIR/frontend/.env"
+      printf "VITE_COMMIT_SHA=%s\n" "$CI_COMMIT_SHA" >> "$CI_PROJECT_DIR/frontend/.env"
+      printf "VITE_BRANCH=%s\n" "$CI_COMMIT_BRANCH" >> "$CI_PROJECT_DIR/frontend/.env"
 
-      chmod 600 "$CI_WORKDIR/message-service/.env" "$CI_WORKDIR/llm-service/.env" "$CI_WORKDIR/frontend/.env"
+      chmod 600 "$CI_PROJECT_DIR/message-service/.env" "$CI_PROJECT_DIR/llm-service/.env" "$CI_PROJECT_DIR/frontend/.env"
 
       echo "Frontend deployment metadata:"
-      grep '^VITE_' "$CI_WORKDIR/frontend/.env"
+      grep '^VITE_' "$CI_PROJECT_DIR/frontend/.env"
+
+      echo "Checking Dockerfiles:"
+      ls -la "$CI_PROJECT_DIR/message-service"
+      ls -la "$CI_PROJECT_DIR/llm-service"
+      ls -la "$CI_PROJECT_DIR/frontend"
+      test -f "$CI_PROJECT_DIR/message-service/Dockerfile"
+      test -f "$CI_PROJECT_DIR/llm-service/Dockerfile"
+      test -f "$CI_PROJECT_DIR/frontend/Dockerfile"
+
   artifacts:
     paths:
-      - .ci-workdir/
+      - message-service/.env
+      - llm-service/.env
+      - frontend/.env
+      - submodule_shas.env
     expire_in: 1 day
 
 build_message_service:
@@ -82,7 +88,7 @@ build_message_service:
   script:
     - |
       set -euo pipefail
-      cd "$CI_WORKDIR/infra"
+      cd "$CI_PROJECT_DIR/infra"
       docker compose -f "$COMPOSE_FILE_TEST" build --no-cache message-service
 
 build_llm_service:
@@ -99,7 +105,7 @@ build_llm_service:
   script:
     - |
       set -euo pipefail
-      cd "$CI_WORKDIR/infra"
+      cd "$CI_PROJECT_DIR/infra"
       docker compose -f "$COMPOSE_FILE_TEST" build --no-cache llm-service
 
 build_frontend:
@@ -116,7 +122,7 @@ build_frontend:
   script:
     - |
       set -euo pipefail
-      cd "$CI_WORKDIR/infra"
+      cd "$CI_PROJECT_DIR/infra"
       docker compose -f "$COMPOSE_FILE_TEST" build --no-cache frontend
 
 test_all_services:
@@ -139,7 +145,7 @@ test_all_services:
 
       docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
 
-      cd "$CI_WORKDIR/infra"
+      cd "$CI_PROJECT_DIR/infra"
       docker compose -f "$COMPOSE_FILE_TEST" down --remove-orphans || true
       docker compose -f "$COMPOSE_FILE_TEST" up -d redis message_store
 
@@ -191,7 +197,7 @@ deploy_and_validate_remote_staging:
 
       docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
 
-      cd "$CI_WORKDIR/infra"
+      cd "$CI_PROJECT_DIR/infra"
       docker compose -f "$COMPOSE_FILE_TEST" down --remove-orphans || true
       docker compose -f "$COMPOSE_FILE_TEST" build --no-cache
       docker compose -f "$COMPOSE_FILE_TEST" up -d --force-recreate
