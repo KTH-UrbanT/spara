@@ -1,24 +1,26 @@
 workflow:
   rules:
-    # Create a pipeline for ANY test/* branch push
     - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
       when: always
     - when: never
 
 stages:
-  - deploy
+  - prepare
+  - build
+  - test
+  - deploy_staging
 
 variables:
+  COMPOSE_FILE_TEST: "docker-compose.test.yml"
+
   DEPLOY_ROOT: "/home/gitlab-runner/spara-deploy"
   WORKDIR: "$DEPLOY_ROOT/current"
 
-deploy_test:
-  stage: deploy
+prepare_environment:
+  stage: prepare
   tags:
     - sciencecloud
   resource_group: test_deploy
-
-  # Auto-deploy on every push to any test/* branch
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
       when: on_success
@@ -27,33 +29,36 @@ deploy_test:
   script:
     - set -euo pipefail
 
-    - echo "CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH"
-    - echo "CI_COMMIT_SHA=$CI_COMMIT_SHA"
-    - echo "CI_PIPELINE_ID=$CI_PIPELINE_ID"
-    - echo "Deploying commit $CI_COMMIT_SHA from branch $CI_COMMIT_BRANCH"
+    - echo "Preparing environment for branch $CI_COMMIT_BRANCH"
+    - echo "Commit: $CI_COMMIT_SHA"
+    - echo "Pipeline: $CI_PIPELINE_ID"
 
     # Prepare workspace
     - mkdir -p "$WORKDIR"
     - rm -rf "$WORKDIR"/*
 
-    # Copy repo WITHOUT .git
+    # Copy repo without .git
     - rsync -a --delete --exclude='.git' ./ "$WORKDIR"/
 
-    # Configure GitHub token for private submodules (HTTPS)
+    # Configure GitHub token for private submodules
     - test -n "$GITHUB_TOKEN"
     - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
     - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
 
-    # Submodules
+    # Init submodules
     - cd "$WORKDIR"
     - git submodule sync --recursive || true
     - git submodule update --init --recursive || true
 
-    # Write backend env files from GitLab variables
+    # Record submodule SHAs for traceability
+    - git submodule status > submodule_shas.env || true
+    - cat submodule_shas.env || true
+
+    # Write backend env files
     - printf "%s" "$MESSAGE_ENV_FILE" > "$WORKDIR/message-service/.env"
     - printf "%s" "$LLM_ENV_FILE" > "$WORKDIR/llm-service/.env"
 
-    # Write frontend env file and inject deployment metadata for UI
+    # Write frontend env and deployment metadata
     - mkdir -p "$WORKDIR/frontend"
     - printf "%s\n" "${FRONTEND_ENV_FILE:-}" > "$WORKDIR/frontend/.env"
     - DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
@@ -62,19 +67,161 @@ deploy_test:
     - printf "VITE_COMMIT_SHA=%s\n" "$CI_COMMIT_SHA" >> "$WORKDIR/frontend/.env"
     - printf "VITE_BRANCH=%s\n" "$CI_COMMIT_BRANCH" >> "$WORKDIR/frontend/.env"
 
-    - chmod 600 "$WORKDIR/message-service/.env" "$WORKDIR/llm-service/.env" "$WORKDIR/frontend/.env"
+    - chmod 600 \
+        "$WORKDIR/message-service/.env" \
+        "$WORKDIR/llm-service/.env" \
+        "$WORKDIR/frontend/.env"
 
-    # Optional debug output for frontend deployment info
     - echo "Frontend deployment metadata:"
     - grep '^VITE_' "$WORKDIR/frontend/.env"
 
-    # Ensure docker network exists
+  artifacts:
+    paths:
+      - /home/gitlab-runner/spara-deploy/current
+    expire_in: 1 day
+
+build_message_service:
+  stage: build
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+
+  script:
+    - set -euo pipefail
+    - cd "$WORKDIR/infra"
+    - docker compose -f "$COMPOSE_FILE_TEST" build --no-cache message-service
+
+build_llm_service:
+  stage: build
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+
+  script:
+    - set -euo pipefail
+    - cd "$WORKDIR/infra"
+    - docker compose -f "$COMPOSE_FILE_TEST" build --no-cache llm-service
+
+build_frontend:
+  stage: build
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+
+  script:
+    - set -euo pipefail
+    - cd "$WORKDIR/infra"
+    - docker compose -f "$COMPOSE_FILE_TEST" build --no-cache frontend
+
+test_all_services:
+  stage: test
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+    - build_message_service
+    - build_llm_service
+    - build_frontend
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+
+  script:
+    - set -euo pipefail
+
     - docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
 
-    # Deploy containers
     - cd "$WORKDIR/infra"
-    - docker compose -f docker-compose.test.yml build --no-cache
-    - docker compose -f docker-compose.test.yml up -d --force-recreate
+
+    # Start from a clean test stack
+    - docker compose -f "$COMPOSE_FILE_TEST" down --remove-orphans || true
+
+    # Start shared dependencies
+    - docker compose -f "$COMPOSE_FILE_TEST" up -d redis message_store
+
+    # Wait for Postgres readiness
+    - |
+      for i in $(seq 1 30); do
+        if docker compose -f "$COMPOSE_FILE_TEST" exec -T message_store pg_isready -U postgres >/dev/null 2>&1; then
+          echo "Postgres is ready"
+          break
+        fi
+        echo "Waiting for Postgres... ($i/30)"
+        sleep 2
+        if [ "$i" -eq 30 ]; then
+          echo "Postgres did not become ready in time"
+          exit 1
+        fi
+      done
+
+    # Test message-service
+    - echo "Testing message-service..."
+    - docker compose -f "$COMPOSE_FILE_TEST" up -d message-service
+    - docker compose -f "$COMPOSE_FILE_TEST" exec -T message-service bash -lc 'if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo "No tests directory found in message-service"; exit 1; fi'
+
+    # Test llm-service
+    - echo "Testing llm-service..."
+    - docker compose -f "$COMPOSE_FILE_TEST" up -d llm-service
+    - docker compose -f "$COMPOSE_FILE_TEST" exec -T llm-service bash -lc 'if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo "No tests directory found in llm-service"; exit 1; fi'
+
+    # Frontend smoke start
+    - echo "Testing frontend startup..."
+    - docker compose -f "$COMPOSE_FILE_TEST" up -d frontend
+    - docker compose -f "$COMPOSE_FILE_TEST" ps
+
+    # Cleanup after successful tests
+    - docker compose -f "$COMPOSE_FILE_TEST" down --remove-orphans || true
+
+deploy_and_validate_remote_staging:
+  stage: deploy_staging
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+    - test_all_services
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+
+  script:
+    - set -euo pipefail
+
+    - echo "Deploying tested branch $CI_COMMIT_BRANCH"
+    - echo "Commit: $CI_COMMIT_SHA"
+
+    - docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
+
+    - cd "$WORKDIR/infra"
+
+    # Clean existing deployment stack
+    - docker compose -f "$COMPOSE_FILE_TEST" down --remove-orphans || true
+
+    # Deploy tested code
+    - docker compose -f "$COMPOSE_FILE_TEST" build --no-cache
+    - docker compose -f "$COMPOSE_FILE_TEST" up -d --force-recreate
 
     # Show result
+    - docker compose -f "$COMPOSE_FILE_TEST" ps
     - docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
