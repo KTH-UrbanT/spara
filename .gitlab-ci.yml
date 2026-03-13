@@ -89,7 +89,7 @@ build_message_service:
     - |
       set -euo pipefail
       cd "$CI_PROJECT_DIR/infra"
-      docker compose -f "$COMPOSE_FILE_TEST" build --no-cache message-service
+      docker compose -f "$COMPOSE_FILE_TEST" build message-service
 
 build_llm_service:
   stage: build
@@ -106,7 +106,7 @@ build_llm_service:
     - |
       set -euo pipefail
       cd "$CI_PROJECT_DIR/infra"
-      docker compose -f "$COMPOSE_FILE_TEST" build --no-cache llm-service
+      docker compose -f "$COMPOSE_FILE_TEST" build llm-service
 
 build_frontend:
   stage: build
@@ -123,7 +123,7 @@ build_frontend:
     - |
       set -euo pipefail
       cd "$CI_PROJECT_DIR/infra"
-      docker compose -f "$COMPOSE_FILE_TEST" build --no-cache frontend
+      docker compose -f "$COMPOSE_FILE_TEST" build frontend
 
 test_all_services:
   stage: test
@@ -199,8 +199,25 @@ deploy_and_validate_remote_staging:
 
       cd "$CI_PROJECT_DIR/infra"
       docker compose -f "$COMPOSE_FILE_TEST" down --remove-orphans || true
-      docker compose -f "$COMPOSE_FILE_TEST" build --no-cache
+      docker compose -f "$COMPOSE_FILE_TEST" build
       docker compose -f "$COMPOSE_FILE_TEST" up -d --force-recreate
 
       docker compose -f "$COMPOSE_FILE_TEST" ps
       docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+      echo "Root disk usage before cleanup:"
+      df -h /
+
+      echo "Docker usage before cleanup:"
+      docker system df || true
+
+      echo "Cleaning unused Docker images and build cache..."
+      docker image prune -af || true
+      docker builder prune -af || true
+      docker container prune -f || true
+
+      echo "Root disk usage after cleanup:"
+      df -h /
+
+      echo "Docker usage after cleanup:"
+      docker system df || true
