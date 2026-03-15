@@ -31,9 +31,9 @@ deploy_test:
     - echo "CI_PIPELINE_ID=$CI_PIPELINE_ID"
     - echo "Deploying commit $CI_COMMIT_SHA from branch $CI_COMMIT_BRANCH"
 
-    # Prepare workspace
+    # Prepare workspace - remove old workdir completely, including hidden .git state
+    - rm -rf "$WORKDIR"
     - mkdir -p "$WORKDIR"
-    - rm -rf "$WORKDIR"/*
 
     # Copy repo WITHOUT .git
     - rsync -a --delete --exclude='.git' ./ "$WORKDIR"/
