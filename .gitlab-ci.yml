@@ -5,16 +5,21 @@ workflow:
     - when: never
 
 stages:
-  - deploy
+  - prepare
+  - build
+  - test
+  - deploy_staging
 
 variables:
-  DEPLOY_ROOT: "/home/gitlab-runner/spara-deploy"
-  WORKDIR: "$DEPLOY_ROOT/current"
-  DOCKER_BUILDKIT: "1"
-  COMPOSE_DOCKER_CLI_BUILD: "1"
+  COMPOSE_FILE_TEST: "docker-compose.test.yml"
+  GIT_SUBMODULE_STRATEGY: none
+  TEST_NETWORK: "spara-ci-${CI_PIPELINE_ID}"
+  TEST_POSTGRES: "spara-ci-${CI_PIPELINE_ID}-postgres"
+  TEST_REDIS: "spara-ci-${CI_PIPELINE_ID}-redis"
+  TEST_FRONTEND: "spara-ci-${CI_PIPELINE_ID}-frontend"
 
-deploy_test:
-  stage: deploy
+prepare_environment:
+  stage: prepare
   tags:
     - sciencecloud
   resource_group: test_deploy
@@ -22,67 +27,276 @@ deploy_test:
     - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
       when: on_success
     - when: never
-
   script:
-    - set -euo pipefail
+    - |
+      set -euo pipefail
 
-    - echo "CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH"
-    - echo "CI_COMMIT_SHA=$CI_COMMIT_SHA"
-    - echo "CI_PIPELINE_ID=$CI_PIPELINE_ID"
-    - echo "Deploying commit $CI_COMMIT_SHA from branch $CI_COMMIT_BRANCH"
+      echo "Preparing environment for branch $CI_COMMIT_BRANCH"
+      echo "Commit: $CI_COMMIT_SHA"
+      echo "Pipeline: $CI_PIPELINE_ID"
 
-    # Configure GitHub token for private submodules (HTTPS)
-    - test -n "$GITHUB_TOKEN"
-    - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
-    - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+      test -n "$GITHUB_TOKEN"
+      git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+      git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
 
-    # Update submodules in the real GitLab checkout directory
-    - cd "$CI_PROJECT_DIR"
-    - git submodule sync --recursive
-    - git submodule update --init --recursive
-    - git submodule status
+      cd "$CI_PROJECT_DIR"
+      git submodule sync --recursive
+      git submodule update --init --recursive
 
-    # Prepare a clean deployment workspace
-    - rm -rf "$WORKDIR"
-    - mkdir -p "$WORKDIR"
+      git submodule status > submodule_shas.env
+      cat submodule_shas.env
 
-    # Copy repo WITHOUT .git into deployment workspace
-    - rsync -a --delete --exclude='.git' "$CI_PROJECT_DIR"/ "$WORKDIR"/
+      printf "%s" "$MESSAGE_ENV_FILE" > "$CI_PROJECT_DIR/message-service/.env"
+      printf "%s" "$LLM_ENV_FILE" > "$CI_PROJECT_DIR/llm-service/.env"
 
-    # Write backend env files from GitLab variables
-    - printf "%s" "$MESSAGE_ENV_FILE" > "$WORKDIR/message-service/.env"
-    - printf "%s" "$LLM_ENV_FILE" > "$WORKDIR/llm-service/.env"
+      mkdir -p "$CI_PROJECT_DIR/frontend"
+      printf "%s\n" "${FRONTEND_ENV_FILE:-}" > "$CI_PROJECT_DIR/frontend/.env"
 
-    # Write frontend env file and inject deployment metadata for UI
-    - mkdir -p "$WORKDIR/frontend"
-    - printf "%s\n" "${FRONTEND_ENV_FILE:-}" > "$WORKDIR/frontend/.env"
-    - DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - printf "VITE_DEPLOYMENT_TAG=%s\n" "$DEPLOYMENT_TAG" >> "$WORKDIR/frontend/.env"
-    - printf "VITE_BUILD_TIME=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$WORKDIR/frontend/.env"
-    - printf "VITE_COMMIT_SHA=%s\n" "$CI_COMMIT_SHA" >> "$WORKDIR/frontend/.env"
-    - printf "VITE_BRANCH=%s\n" "$CI_COMMIT_BRANCH" >> "$WORKDIR/frontend/.env"
+      DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      printf "VITE_DEPLOYMENT_TAG=%s\n" "$DEPLOYMENT_TAG" >> "$CI_PROJECT_DIR/frontend/.env"
+      printf "VITE_BUILD_TIME=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$CI_PROJECT_DIR/frontend/.env"
+      printf "VITE_COMMIT_SHA=%s\n" "$CI_COMMIT_SHA" >> "$CI_PROJECT_DIR/frontend/.env"
+      printf "VITE_BRANCH=%s\n" "$CI_COMMIT_BRANCH" >> "$CI_PROJECT_DIR/frontend/.env"
 
-    - chmod 600 "$WORKDIR/message-service/.env" "$WORKDIR/llm-service/.env" "$WORKDIR/frontend/.env"
+      chmod 600 "$CI_PROJECT_DIR/message-service/.env" "$CI_PROJECT_DIR/llm-service/.env" "$CI_PROJECT_DIR/frontend/.env"
 
-    # Optional debug output for frontend deployment info
-    - echo "Frontend deployment metadata:"
-    - grep '^VITE_' "$WORKDIR/frontend/.env"
+      echo "Frontend deployment metadata:"
+      grep '^VITE_' "$CI_PROJECT_DIR/frontend/.env"
 
-    # Ensure docker network exists
-    - docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
+      echo "Checking Dockerfiles:"
+      test -f "$CI_PROJECT_DIR/message-service/Dockerfile"
+      test -f "$CI_PROJECT_DIR/llm-service/Dockerfile"
+      test -f "$CI_PROJECT_DIR/frontend/Dockerfile"
 
-    # Show docker usage before deploy
-    - docker system df || true
+  artifacts:
+    paths:
+      - message-service/.env
+      - llm-service/.env
+      - frontend/.env
+      - submodule_shas.env
+    expire_in: 1 day
 
-    # Deploy only this stack. Do not touch external reverse proxy / nginx setup.
-    - cd "$WORKDIR/infra"
-    - docker compose -f docker-compose.test.yml pull || true
-    - docker compose -f docker-compose.test.yml up -d --build --force-recreate --remove-orphans
+build_message_service:
+  stage: build
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+  script:
+    - |
+      set -euo pipefail
+      cd "$CI_PROJECT_DIR/infra"
+      docker compose -f "$COMPOSE_FILE_TEST" build message-service
 
-    # Remove only stale artifacts generated by builds/deploys. Do not touch volumes or nginx proxy manager.
-    - docker image prune -f
-    - docker builder prune -af --filter "until=168h" || true
+build_llm_service:
+  stage: build
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+  script:
+    - |
+      set -euo pipefail
+      cd "$CI_PROJECT_DIR/infra"
+      docker compose -f "$COMPOSE_FILE_TEST" build llm-service
 
-    # Show result
-    - docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-    - docker system df || true
+build_frontend:
+  stage: build
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+  script:
+    - |
+      set -euo pipefail
+      cd "$CI_PROJECT_DIR/infra"
+      docker compose -f "$COMPOSE_FILE_TEST" build frontend
+
+test_all_services:
+  stage: test
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+    - build_message_service
+    - build_llm_service
+    - build_frontend
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+  script:
+    - |
+      set -euo pipefail
+
+      cleanup() {
+        docker rm -f "$TEST_FRONTEND" "$TEST_POSTGRES" "$TEST_REDIS" >/dev/null 2>&1 || true
+        docker network rm "$TEST_NETWORK" >/dev/null 2>&1 || true
+      }
+      trap cleanup EXIT
+
+      docker network create "$TEST_NETWORK" >/dev/null 2>&1 || true
+
+      echo "Starting isolated Postgres and Redis for tests..."
+      docker run -d --name "$TEST_POSTGRES" --network "$TEST_NETWORK" \
+        -e POSTGRES_USER=postgres \
+        -e POSTGRES_PASSWORD=postgres \
+        -e POSTGRES_DB=message_store \
+        postgres:13
+
+      docker run -d --name "$TEST_REDIS" --network "$TEST_NETWORK" redis:latest
+
+      for i in $(seq 1 30); do
+        if docker exec "$TEST_POSTGRES" pg_isready -U postgres -d message_store >/dev/null 2>&1; then
+          echo "Postgres is ready"
+          break
+        fi
+        echo "Waiting for Postgres... ($i/30)"
+        sleep 2
+        if [ "$i" -eq 30 ]; then
+          echo "Postgres did not become ready in time"
+          exit 1
+        fi
+      done
+
+      echo "Smoke-testing message-service DB auth first..."
+      docker run --rm --network "$TEST_NETWORK" \
+        --env-file "$CI_PROJECT_DIR/message-service/.env" \
+        -e SQL_DB_HOST="$TEST_POSTGRES" \
+        -e SQL_DB_NAME="message_store" \
+        -e SQL_DB_USER="postgres" \
+        -e SQL_DB_PASSWORD="postgres" \
+        -e SQL_DB_PORT="5432" \
+        -e REDIS_HOST="$TEST_REDIS" \
+        --entrypoint python \
+        spara-test-message-service - <<'PY'
+      import os, psycopg2
+      conn = psycopg2.connect(
+          host=os.getenv("SQL_DB_HOST"),
+          dbname=os.getenv("SQL_DB_NAME"),
+          user=os.getenv("SQL_DB_USER"),
+          password=os.getenv("SQL_DB_PASSWORD"),
+          port=os.getenv("SQL_DB_PORT"),
+      )
+      print("message-service DB connection OK")
+      conn.close()
+      PY
+
+      echo "Testing message-service..."
+      docker run --rm --network "$TEST_NETWORK" \
+        --env-file "$CI_PROJECT_DIR/message-service/.env" \
+        -e SQL_DB_HOST="$TEST_POSTGRES" \
+        -e SQL_DB_NAME="message_store" \
+        -e SQL_DB_USER="postgres" \
+        -e SQL_DB_PASSWORD="postgres" \
+        -e SQL_DB_PORT="5432" \
+        -e REDIS_HOST="$TEST_REDIS" \
+        --entrypoint bash \
+        spara-test-message-service -lc 'if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo "No tests directory found in message-service"; exit 1; fi'
+
+      echo "Testing llm-service..."
+      docker run --rm --network "$TEST_NETWORK" \
+        --env-file "$CI_PROJECT_DIR/llm-service/.env" \
+        -e REDIS_HOST="$TEST_REDIS" \
+        --entrypoint bash \
+        spara-test-llm-service -lc 'if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo "No tests directory found in llm-service"; exit 1; fi'
+
+      echo "Testing frontend startup..."
+      docker run -d --name "$TEST_FRONTEND" --network "$TEST_NETWORK" spara-test-frontend
+      sleep 5
+      docker exec "$TEST_FRONTEND" sh -lc "wget -qO- http://127.0.0.1:80 | grep -q '<div id=\"root\"></div>'"
+
+deploy_and_validate_remote_staging:
+  stage: deploy_staging
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+    - test_all_services
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+  script:
+    - |
+      set -euo pipefail
+
+      retry_compose_up() {
+        local tries=3
+        local n=1
+        until docker compose -f "$COMPOSE_FILE_TEST" up -d --force-recreate --remove-orphans; do
+          if [ "$n" -ge "$tries" ]; then
+            echo "docker compose up failed after $tries attempts"
+            return 1
+          fi
+          echo "Deploy attempt $n failed, retrying..."
+          n=$((n+1))
+          sleep 10
+        done
+      }
+
+      echo "Deploying tested branch $CI_COMMIT_BRANCH"
+      echo "Commit: $CI_COMMIT_SHA"
+
+      docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
+
+      cd "$CI_PROJECT_DIR/infra"
+
+      # Do not touch nginx / nginx-proxy-manager.
+      # Do not remove volumes.
+      # Do not aggressively prune unrelated containers/images before deploy.
+      docker compose -f "$COMPOSE_FILE_TEST" build
+      retry_compose_up
+
+      echo "Validating deployed message-service DB auth..."
+      docker exec -i spara-message-service python - <<'PY'
+      import os, psycopg2
+      conn = psycopg2.connect(
+          host=os.getenv("SQL_DB_HOST"),
+          dbname=os.getenv("SQL_DB_NAME"),
+          user=os.getenv("SQL_DB_USER"),
+          password=os.getenv("SQL_DB_PASSWORD"),
+          port=os.getenv("SQL_DB_PORT"),
+      )
+      print("Deployed message-service DB connection OK")
+      conn.close()
+      PY
+
+      echo "Validating deployed frontend..."
+      curl -fsS http://127.0.0.1:8808 >/dev/null
+
+      docker compose -f "$COMPOSE_FILE_TEST" ps
+      docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+      echo "Root disk usage before cleanup:"
+      df -h /
+
+      echo "Docker usage before cleanup:"
+      docker system df || true
+
+      echo "Cleaning safe unused Docker artifacts only..."
+      docker image prune -f || true
+      docker builder prune -af --filter "until=168h" || true
+
+      echo "Root disk usage after cleanup:"
+      df -h /
+
+      echo "Docker usage after cleanup:"
+      docker system df || true
