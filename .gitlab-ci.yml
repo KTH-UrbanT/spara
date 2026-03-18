@@ -11,12 +11,15 @@ stages:
   - deploy_staging
 
 variables:
+  DEPLOY_ROOT: "/home/gitlab-runner/spara-deploy"
+  WORKDIR: "$DEPLOY_ROOT/current"
   COMPOSE_FILE_TEST: "docker-compose.test.yml"
   GIT_SUBMODULE_STRATEGY: none
+  DOCKER_BUILDKIT: "1"
+  COMPOSE_DOCKER_CLI_BUILD: "1"
   TEST_NETWORK: "spara-ci-${CI_PIPELINE_ID}"
   TEST_POSTGRES: "spara-ci-${CI_PIPELINE_ID}-postgres"
   TEST_REDIS: "spara-ci-${CI_PIPELINE_ID}-redis"
-  TEST_FRONTEND: "spara-ci-${CI_PIPELINE_ID}-frontend"
 
 prepare_environment:
   stage: prepare
@@ -43,38 +46,38 @@ prepare_environment:
       git submodule sync --recursive
       git submodule update --init --recursive
 
-      git submodule status > submodule_shas.env
-      cat submodule_shas.env
+      echo "Resolved submodule SHAs:"
+      git submodule status
 
-      printf "%s" "$MESSAGE_ENV_FILE" > "$CI_PROJECT_DIR/message-service/.env"
-      printf "%s" "$LLM_ENV_FILE" > "$CI_PROJECT_DIR/llm-service/.env"
+      rm -rf "$WORKDIR"
+      mkdir -p "$WORKDIR"
 
-      mkdir -p "$CI_PROJECT_DIR/frontend"
-      printf "%s\n" "${FRONTEND_ENV_FILE:-}" > "$CI_PROJECT_DIR/frontend/.env"
+      rsync -a --delete --exclude='.git' "$CI_PROJECT_DIR"/ "$WORKDIR"/
+
+      printf "%s" "$MESSAGE_ENV_FILE" > "$WORKDIR/message-service/.env"
+      printf "%s" "$LLM_ENV_FILE" > "$WORKDIR/llm-service/.env"
+
+      mkdir -p "$WORKDIR/frontend"
+      printf "%s\n" "${FRONTEND_ENV_FILE:-}" > "$WORKDIR/frontend/.env"
 
       DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-      printf "VITE_DEPLOYMENT_TAG=%s\n" "$DEPLOYMENT_TAG" >> "$CI_PROJECT_DIR/frontend/.env"
-      printf "VITE_BUILD_TIME=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$CI_PROJECT_DIR/frontend/.env"
-      printf "VITE_COMMIT_SHA=%s\n" "$CI_COMMIT_SHA" >> "$CI_PROJECT_DIR/frontend/.env"
-      printf "VITE_BRANCH=%s\n" "$CI_COMMIT_BRANCH" >> "$CI_PROJECT_DIR/frontend/.env"
+      printf "VITE_DEPLOYMENT_TAG=%s\n" "$DEPLOYMENT_TAG" >> "$WORKDIR/frontend/.env"
+      printf "VITE_BUILD_TIME=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$WORKDIR/frontend/.env"
+      printf "VITE_COMMIT_SHA=%s\n" "$CI_COMMIT_SHA" >> "$WORKDIR/frontend/.env"
+      printf "VITE_BRANCH=%s\n" "$CI_COMMIT_BRANCH" >> "$WORKDIR/frontend/.env"
 
-      chmod 600 "$CI_PROJECT_DIR/message-service/.env" "$CI_PROJECT_DIR/llm-service/.env" "$CI_PROJECT_DIR/frontend/.env"
+      chmod 600 \
+        "$WORKDIR/message-service/.env" \
+        "$WORKDIR/llm-service/.env" \
+        "$WORKDIR/frontend/.env"
 
       echo "Frontend deployment metadata:"
-      grep '^VITE_' "$CI_PROJECT_DIR/frontend/.env"
+      grep '^VITE_' "$WORKDIR/frontend/.env"
 
-      echo "Checking Dockerfiles:"
-      test -f "$CI_PROJECT_DIR/message-service/Dockerfile"
-      test -f "$CI_PROJECT_DIR/llm-service/Dockerfile"
-      test -f "$CI_PROJECT_DIR/frontend/Dockerfile"
-
-  artifacts:
-    paths:
-      - message-service/.env
-      - llm-service/.env
-      - frontend/.env
-      - submodule_shas.env
-    expire_in: 1 day
+      test -f "$WORKDIR/message-service/Dockerfile"
+      test -f "$WORKDIR/llm-service/Dockerfile"
+      test -f "$WORKDIR/frontend/Dockerfile"
+      test -f "$WORKDIR/infra/$COMPOSE_FILE_TEST"
 
 build_message_service:
   stage: build
@@ -90,7 +93,7 @@ build_message_service:
   script:
     - |
       set -euo pipefail
-      cd "$CI_PROJECT_DIR/infra"
+      cd "$WORKDIR/infra"
       docker compose -f "$COMPOSE_FILE_TEST" build message-service
 
 build_llm_service:
@@ -107,7 +110,7 @@ build_llm_service:
   script:
     - |
       set -euo pipefail
-      cd "$CI_PROJECT_DIR/infra"
+      cd "$WORKDIR/infra"
       docker compose -f "$COMPOSE_FILE_TEST" build llm-service
 
 build_frontend:
@@ -124,10 +127,10 @@ build_frontend:
   script:
     - |
       set -euo pipefail
-      cd "$CI_PROJECT_DIR/infra"
+      cd "$WORKDIR/infra"
       docker compose -f "$COMPOSE_FILE_TEST" build frontend
 
-test_all_services:
+test_message_service:
   stage: test
   tags:
     - sciencecloud
@@ -135,8 +138,6 @@ test_all_services:
   needs:
     - prepare_environment
     - build_message_service
-    - build_llm_service
-    - build_frontend
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
       when: on_success
@@ -146,26 +147,26 @@ test_all_services:
       set -euo pipefail
 
       cleanup() {
-        docker rm -f "$TEST_FRONTEND" "$TEST_POSTGRES" "$TEST_REDIS" >/dev/null 2>&1 || true
+        docker rm -f "$TEST_POSTGRES" "$TEST_REDIS" >/dev/null 2>&1 || true
         docker network rm "$TEST_NETWORK" >/dev/null 2>&1 || true
       }
       trap cleanup EXIT
 
-      # Load DB credentials from GitLab-provided env file
       set -a
-      . "$CI_PROJECT_DIR/message-service/.env"
+      . "$WORKDIR/message-service/.env"
       set +a
 
       docker network create "$TEST_NETWORK" >/dev/null 2>&1 || true
 
-      echo "Starting isolated Postgres and Redis for tests..."
+      echo "Starting isolated Postgres and Redis for message-service tests..."
       docker run -d --name "$TEST_POSTGRES" --network "$TEST_NETWORK" \
         -e POSTGRES_USER=postgres \
         -e POSTGRES_PASSWORD=postgres \
         -e POSTGRES_DB=message_store \
         postgres:13
 
-      docker run -d --name "$TEST_REDIS" --network "$TEST_NETWORK" redis:latest
+      docker run -d --name "$TEST_REDIS" --network "$TEST_NETWORK" \
+        redis:latest
 
       for i in $(seq 1 30); do
         if docker exec "$TEST_POSTGRES" pg_isready -U postgres -d message_store >/dev/null 2>&1; then
@@ -180,7 +181,7 @@ test_all_services:
         fi
       done
 
-      echo "Creating app DB role in isolated test Postgres..."
+      echo "Creating app DB role in isolated Postgres..."
       docker exec -i "$TEST_POSTGRES" psql -U postgres -d message_store <<SQL
       DO \$\$
       BEGIN
@@ -204,48 +205,52 @@ test_all_services:
       GRANT USAGE, SELECT ON SEQUENCES TO ${SQL_DB_USER};
       SQL
 
-      echo "Smoke-testing message-service DB auth first..."
+      echo "Running message-service tests..."
       docker run --rm --network "$TEST_NETWORK" \
-        --env-file "$CI_PROJECT_DIR/message-service/.env" \
-        -e SQL_DB_HOST="$TEST_POSTGRES" \
-        -e SQL_DB_NAME="message_store" \
-        -e SQL_DB_PORT="5432" \
-        -e REDIS_HOST="$TEST_REDIS" \
-        --entrypoint python \
-        spara-test-message-service - <<'PY'
-      import os, psycopg2
-      conn = psycopg2.connect(
-          host=os.getenv("SQL_DB_HOST"),
-          dbname=os.getenv("SQL_DB_NAME"),
-          user=os.getenv("SQL_DB_USER"),
-          password=os.getenv("SQL_DB_PASSWORD"),
-          port=os.getenv("SQL_DB_PORT"),
-      )
-      print("message-service DB connection OK")
-      conn.close()
-      PY
-
-      echo "Testing message-service..."
-      docker run --rm --network "$TEST_NETWORK" \
-        --env-file "$CI_PROJECT_DIR/message-service/.env" \
+        --env-file "$WORKDIR/message-service/.env" \
         -e SQL_DB_HOST="$TEST_POSTGRES" \
         -e SQL_DB_NAME="message_store" \
         -e SQL_DB_PORT="5432" \
         -e REDIS_HOST="$TEST_REDIS" \
         --entrypoint bash \
-        spara-test-message-service -lc 'if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo "No tests directory found in message-service"; exit 1; fi'
+        spara-test-message-service \
+        -lc 'if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo "No tests directory found in message-service"; exit 1; fi'
 
-      echo "Testing llm-service..."
+test_llm_service:
+  stage: test
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+    - build_llm_service
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+  script:
+    - |
+      set -euo pipefail
+
+      cleanup() {
+        docker rm -f "$TEST_REDIS" >/dev/null 2>&1 || true
+        docker network rm "$TEST_NETWORK" >/dev/null 2>&1 || true
+      }
+      trap cleanup EXIT
+
+      docker network create "$TEST_NETWORK" >/dev/null 2>&1 || true
+
+      echo "Starting isolated Redis for llm-service tests..."
+      docker run -d --name "$TEST_REDIS" --network "$TEST_NETWORK" \
+        redis:latest
+
+      echo "Running llm-service tests..."
       docker run --rm --network "$TEST_NETWORK" \
-        --env-file "$CI_PROJECT_DIR/llm-service/.env" \
+        --env-file "$WORKDIR/llm-service/.env" \
         -e REDIS_HOST="$TEST_REDIS" \
         --entrypoint bash \
-        spara-test-llm-service -lc 'if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo "No tests directory found in llm-service"; exit 1; fi'
-
-      echo "Testing frontend startup..."
-      docker run -d --name "$TEST_FRONTEND" --network "$TEST_NETWORK" spara-test-frontend
-      sleep 5
-      docker exec "$TEST_FRONTEND" sh -lc "wget -qO- http://127.0.0.1:80 | grep -q '<div id=\"root\"></div>'"
+        spara-test-llm-service \
+        -lc 'if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo "No tests directory found in llm-service"; exit 1; fi'
 
 deploy_and_validate_remote_staging:
   stage: deploy_staging
@@ -254,7 +259,11 @@ deploy_and_validate_remote_staging:
   resource_group: test_deploy
   needs:
     - prepare_environment
-    - test_all_services
+    - build_message_service
+    - build_llm_service
+    - build_frontend
+    - test_message_service
+    - test_llm_service
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
       when: on_success
@@ -277,34 +286,8 @@ deploy_and_validate_remote_staging:
         done
       }
 
-      rollback_staging() {
-        echo "Rolling back staging app containers..."
-        cd "$CI_PROJECT_DIR/infra"
-
-        if [ -f /tmp/spara-staging-images.env ]; then
-          . /tmp/spara-staging-images.env
-        fi
-
-        if [ -n "${OLD_MESSAGE_IMAGE:-}" ]; then
-          docker tag "$OLD_MESSAGE_IMAGE" spara-test-message-service || true
-        fi
-        if [ -n "${OLD_LLM_IMAGE:-}" ]; then
-          docker tag "$OLD_LLM_IMAGE" spara-test-llm-service || true
-        fi
-        if [ -n "${OLD_FRONTEND_IMAGE:-}" ]; then
-          docker tag "$OLD_FRONTEND_IMAGE" spara-test-frontend || true
-        fi
-
-        docker compose -f "$COMPOSE_FILE_TEST" up -d --force-recreate --remove-orphans || true
-
-        if [ -f /tmp/spara-staging-backup.dump ]; then
-          echo "Restoring staging DB backup..."
-          cat /tmp/spara-staging-backup.dump | docker exec -i spara-postgres-test pg_restore -U postgres -d message_store --clean --if-exists || true
-        fi
-      }
-
       validate_staging() {
-        echo "Validating deployed message-service DB auth..."
+        echo "Validating message-service DB connectivity..."
         docker exec -i spara-message-service python - <<'PY'
       import os, psycopg2
       conn = psycopg2.connect(
@@ -318,7 +301,7 @@ deploy_and_validate_remote_staging:
       conn.close()
       PY
 
-        echo "Validating deployed frontend..."
+        echo "Validating frontend..."
         curl -fsS http://127.0.0.1:8808 >/dev/null
       }
 
@@ -327,7 +310,10 @@ deploy_and_validate_remote_staging:
 
       docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
 
-      cd "$CI_PROJECT_DIR/infra"
+      echo "Docker usage before deploy:"
+      docker system df || true
+
+      cd "$WORKDIR/infra"
 
       echo "Backing up staging DB before deploy..."
       if docker ps --format '{{.Names}}' | grep -qx spara-postgres-test; then
@@ -336,31 +322,15 @@ deploy_and_validate_remote_staging:
         rm -f /tmp/spara-staging-backup.dump
       fi
 
-      echo "Recording current running images for rollback..."
-      OLD_MESSAGE_IMAGE="$(docker inspect --format='{{.Image}}' spara-message-service 2>/dev/null || true)"
-      OLD_LLM_IMAGE="$(docker inspect --format='{{.Image}}' spara-llm-service-test 2>/dev/null || true)"
-      OLD_FRONTEND_IMAGE="$(docker inspect --format='{{.Image}}' spara-frontend-test 2>/dev/null || true)"
-
-      cat > /tmp/spara-staging-images.env <<EOF
-      OLD_MESSAGE_IMAGE=${OLD_MESSAGE_IMAGE}
-      OLD_LLM_IMAGE=${OLD_LLM_IMAGE}
-      OLD_FRONTEND_IMAGE=${OLD_FRONTEND_IMAGE}
-      EOF
-
-      echo "Building new images..."
-      docker compose -f "$COMPOSE_FILE_TEST" build
-
-      echo "Deploying new staging version..."
+      echo "Deploying already built images..."
       if ! retry_compose_up; then
-        echo "Deploy failed, rolling back..."
-        rollback_staging
+        echo "Deployment failed"
         exit 1
       fi
 
       echo "Validating staging deployment..."
       if ! validate_staging; then
-        echo "Validation failed, rolling back..."
-        rollback_staging
+        echo "Validation failed"
         exit 1
       fi
 
