@@ -164,8 +164,7 @@ test_message_service:
         -e POSTGRES_PASSWORD=postgres \
         postgres:13
 
-      docker run -d --name "$TEST_REDIS" --network "$TEST_NETWORK" \
-        redis:latest
+      docker run -d --name "$TEST_REDIS" --network "$TEST_NETWORK" redis:latest
 
       echo "Waiting for Postgres server..."
       for i in $(seq 1 30); do
@@ -249,8 +248,7 @@ test_llm_service:
       docker network create "$TEST_NETWORK" >/dev/null 2>&1 || true
 
       echo "Starting isolated Redis for llm-service tests..."
-      docker run -d --name "$TEST_REDIS" --network "$TEST_NETWORK" \
-        redis:latest
+      docker run -d --name "$TEST_REDIS" --network "$TEST_NETWORK" redis:latest
 
       echo "Running llm-service tests..."
       docker run --rm --network "$TEST_NETWORK" \
@@ -367,8 +365,7 @@ deploy_and_validate_remote_staging:
       echo "Docker usage before cleanup:"
       docker system df || true
 
-      echo "Cleaning safe unused Docker artifacts only..."
-      docker image prune -f || true
+      echo "Cleaning Docker build cache only..."
       docker builder prune -af --filter "until=168h" || true
 
       echo "Root disk usage after cleanup:"
