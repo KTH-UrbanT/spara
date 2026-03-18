@@ -162,15 +162,15 @@ test_message_service:
       docker run -d --name "$TEST_POSTGRES" --network "$TEST_NETWORK" \
         -e POSTGRES_USER=postgres \
         -e POSTGRES_PASSWORD=postgres \
-        -e POSTGRES_DB=message_store \
         postgres:13
 
       docker run -d --name "$TEST_REDIS" --network "$TEST_NETWORK" \
         redis:latest
 
+      echo "Waiting for Postgres server..."
       for i in $(seq 1 30); do
-        if docker exec "$TEST_POSTGRES" pg_isready -U postgres -d message_store >/dev/null 2>&1; then
-          echo "Postgres is ready"
+        if docker exec "$TEST_POSTGRES" pg_isready -U postgres >/dev/null 2>&1; then
+          echo "Postgres server is ready"
           break
         fi
         echo "Waiting for Postgres... ($i/30)"
@@ -181,8 +181,16 @@ test_message_service:
         fi
       done
 
+      echo "Ensuring message_store database exists..."
+      docker exec -i "$TEST_POSTGRES" psql -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+      SELECT 'CREATE DATABASE message_store'
+      WHERE NOT EXISTS (
+        SELECT FROM pg_database WHERE datname = 'message_store'
+      )\gexec
+      SQL
+
       echo "Creating app DB role in isolated Postgres..."
-      docker exec -i "$TEST_POSTGRES" psql -U postgres -d message_store <<SQL
+      docker exec -i "$TEST_POSTGRES" psql -v ON_ERROR_STOP=1 -U postgres -d message_store <<SQL
       DO \$\$
       BEGIN
          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${SQL_DB_USER}') THEN
