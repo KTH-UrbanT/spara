@@ -310,7 +310,19 @@ deploy_and_validate_remote_staging:
       PY
 
         echo "Validating frontend..."
-        curl -fsS http://127.0.0.1:8808 >/dev/null
+        for i in $(seq 1 20); do
+          if curl -fsS http://127.0.0.1:8808 >/dev/null; then
+            echo "Frontend is reachable"
+            return 0
+          fi
+          echo "Waiting for frontend... ($i/20)"
+          sleep 3
+        done
+
+        echo "Frontend did not become ready in time"
+        echo "Frontend logs:"
+        docker logs --tail 100 spara-frontend-test || true
+        return 1
       }
 
       echo "Deploying tested branch $CI_COMMIT_BRANCH"
@@ -333,12 +345,16 @@ deploy_and_validate_remote_staging:
       echo "Deploying already built images..."
       if ! retry_compose_up; then
         echo "Deployment failed"
+        docker compose -f "$COMPOSE_FILE_TEST" ps || true
+        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
         exit 1
       fi
 
       echo "Validating staging deployment..."
       if ! validate_staging; then
         echo "Validation failed"
+        docker compose -f "$COMPOSE_FILE_TEST" ps || true
+        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
         exit 1
       fi
 
