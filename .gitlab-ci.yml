@@ -151,6 +151,11 @@ test_all_services:
       }
       trap cleanup EXIT
 
+      # Load DB credentials from GitLab-provided env file
+      set -a
+      . "$CI_PROJECT_DIR/message-service/.env"
+      set +a
+
       docker network create "$TEST_NETWORK" >/dev/null 2>&1 || true
 
       echo "Starting isolated Postgres and Redis for tests..."
@@ -175,13 +180,35 @@ test_all_services:
         fi
       done
 
+      echo "Creating app DB role in isolated test Postgres..."
+      docker exec -i "$TEST_POSTGRES" psql -U postgres -d message_store <<SQL
+      DO \$\$
+      BEGIN
+         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${SQL_DB_USER}') THEN
+            CREATE ROLE ${SQL_DB_USER} LOGIN PASSWORD '${SQL_DB_PASSWORD}';
+         ELSE
+            ALTER ROLE ${SQL_DB_USER} WITH PASSWORD '${SQL_DB_PASSWORD}';
+         END IF;
+      END
+      \$\$;
+
+      GRANT CONNECT ON DATABASE message_store TO ${SQL_DB_USER};
+      GRANT USAGE ON SCHEMA public TO ${SQL_DB_USER};
+      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${SQL_DB_USER};
+      GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${SQL_DB_USER};
+
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public
+      GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${SQL_DB_USER};
+
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public
+      GRANT USAGE, SELECT ON SEQUENCES TO ${SQL_DB_USER};
+      SQL
+
       echo "Smoke-testing message-service DB auth first..."
       docker run --rm --network "$TEST_NETWORK" \
         --env-file "$CI_PROJECT_DIR/message-service/.env" \
         -e SQL_DB_HOST="$TEST_POSTGRES" \
         -e SQL_DB_NAME="message_store" \
-        -e SQL_DB_USER="postgres" \
-        -e SQL_DB_PASSWORD="postgres" \
         -e SQL_DB_PORT="5432" \
         -e REDIS_HOST="$TEST_REDIS" \
         --entrypoint python \
@@ -203,8 +230,6 @@ test_all_services:
         --env-file "$CI_PROJECT_DIR/message-service/.env" \
         -e SQL_DB_HOST="$TEST_POSTGRES" \
         -e SQL_DB_NAME="message_store" \
-        -e SQL_DB_USER="postgres" \
-        -e SQL_DB_PASSWORD="postgres" \
         -e SQL_DB_PORT="5432" \
         -e REDIS_HOST="$TEST_REDIS" \
         --entrypoint bash \
@@ -252,21 +277,35 @@ deploy_and_validate_remote_staging:
         done
       }
 
-      echo "Deploying tested branch $CI_COMMIT_BRANCH"
-      echo "Commit: $CI_COMMIT_SHA"
+      rollback_staging() {
+        echo "Rolling back staging app containers..."
+        cd "$CI_PROJECT_DIR/infra"
 
-      docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
+        if [ -f /tmp/spara-staging-images.env ]; then
+          . /tmp/spara-staging-images.env
+        fi
 
-      cd "$CI_PROJECT_DIR/infra"
+        if [ -n "${OLD_MESSAGE_IMAGE:-}" ]; then
+          docker tag "$OLD_MESSAGE_IMAGE" spara-test-message-service || true
+        fi
+        if [ -n "${OLD_LLM_IMAGE:-}" ]; then
+          docker tag "$OLD_LLM_IMAGE" spara-test-llm-service || true
+        fi
+        if [ -n "${OLD_FRONTEND_IMAGE:-}" ]; then
+          docker tag "$OLD_FRONTEND_IMAGE" spara-test-frontend || true
+        fi
 
-      # Do not touch nginx / nginx-proxy-manager.
-      # Do not remove volumes.
-      # Do not aggressively prune unrelated containers/images before deploy.
-      docker compose -f "$COMPOSE_FILE_TEST" build
-      retry_compose_up
+        docker compose -f "$COMPOSE_FILE_TEST" up -d --force-recreate --remove-orphans || true
 
-      echo "Validating deployed message-service DB auth..."
-      docker exec -i spara-message-service python - <<'PY'
+        if [ -f /tmp/spara-staging-backup.dump ]; then
+          echo "Restoring staging DB backup..."
+          cat /tmp/spara-staging-backup.dump | docker exec -i spara-postgres-test pg_restore -U postgres -d message_store --clean --if-exists || true
+        fi
+      }
+
+      validate_staging() {
+        echo "Validating deployed message-service DB auth..."
+        docker exec -i spara-message-service python - <<'PY'
       import os, psycopg2
       conn = psycopg2.connect(
           host=os.getenv("SQL_DB_HOST"),
@@ -279,8 +318,51 @@ deploy_and_validate_remote_staging:
       conn.close()
       PY
 
-      echo "Validating deployed frontend..."
-      curl -fsS http://127.0.0.1:8808 >/dev/null
+        echo "Validating deployed frontend..."
+        curl -fsS http://127.0.0.1:8808 >/dev/null
+      }
+
+      echo "Deploying tested branch $CI_COMMIT_BRANCH"
+      echo "Commit: $CI_COMMIT_SHA"
+
+      docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
+
+      cd "$CI_PROJECT_DIR/infra"
+
+      echo "Backing up staging DB before deploy..."
+      if docker ps --format '{{.Names}}' | grep -qx spara-postgres-test; then
+        docker exec spara-postgres-test pg_dump -U postgres -d message_store -Fc > /tmp/spara-staging-backup.dump
+      else
+        rm -f /tmp/spara-staging-backup.dump
+      fi
+
+      echo "Recording current running images for rollback..."
+      OLD_MESSAGE_IMAGE="$(docker inspect --format='{{.Image}}' spara-message-service 2>/dev/null || true)"
+      OLD_LLM_IMAGE="$(docker inspect --format='{{.Image}}' spara-llm-service-test 2>/dev/null || true)"
+      OLD_FRONTEND_IMAGE="$(docker inspect --format='{{.Image}}' spara-frontend-test 2>/dev/null || true)"
+
+      cat > /tmp/spara-staging-images.env <<EOF
+      OLD_MESSAGE_IMAGE=${OLD_MESSAGE_IMAGE}
+      OLD_LLM_IMAGE=${OLD_LLM_IMAGE}
+      OLD_FRONTEND_IMAGE=${OLD_FRONTEND_IMAGE}
+      EOF
+
+      echo "Building new images..."
+      docker compose -f "$COMPOSE_FILE_TEST" build
+
+      echo "Deploying new staging version..."
+      if ! retry_compose_up; then
+        echo "Deploy failed, rolling back..."
+        rollback_staging
+        exit 1
+      fi
+
+      echo "Validating staging deployment..."
+      if ! validate_staging; then
+        echo "Validation failed, rolling back..."
+        rollback_staging
+        exit 1
+      fi
 
       docker compose -f "$COMPOSE_FILE_TEST" ps
       docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
