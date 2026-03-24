@@ -26,8 +26,9 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE TABLE IF NOT EXISTS ratings (
     rating_id SERIAL PRIMARY KEY,
-    user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
-    rating FLOAT,
-    message TEXT NOT NULL,
-    version TEXT
+    user_id INTEGER NULL REFERENCES users(user_id) ON DELETE SET NULL,
+    rating DOUBLE PRECISION NOT NULL,
+    message INTEGER NOT NULL UNIQUE REFERENCES messages(message_id) ON DELETE CASCADE,
+    version TEXT NOT NULL,
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
 );
