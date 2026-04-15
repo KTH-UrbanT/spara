@@ -1,4 +1,4 @@
-name: spara-demo
+version: "3.8"
 
 services:
   redis:
