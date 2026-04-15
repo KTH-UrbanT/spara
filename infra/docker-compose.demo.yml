@@ -14,7 +14,7 @@ services:
     build:
       context: ../message-service
       dockerfile: Dockerfile
-    container_name: spara-message-service-demo
+    container_name: spara-message-service
     restart: always
     networks:
       - spara_demo_network
