@@ -468,7 +468,7 @@ build_demo_message_service:
       set -euo pipefail
       export WORKDIR="$WORKDIR_DEMO"
       cd "$WORKDIR/infra"
-      docker-compose -f "$COMPOSE_FILE_DEMO" build message-service
+      docker compose -f "$COMPOSE_FILE_DEMO" build message-service
 
 build_demo_llm_service:
   stage: build
@@ -486,7 +486,7 @@ build_demo_llm_service:
       set -euo pipefail
       export WORKDIR="$WORKDIR_DEMO"
       cd "$WORKDIR/infra"
-      docker-compose -f "$COMPOSE_FILE_DEMO" build llm-service
+      docker compose -f "$COMPOSE_FILE_DEMO" build llm-service
 
 build_demo_frontend:
   stage: build
@@ -504,7 +504,7 @@ build_demo_frontend:
       set -euo pipefail
       export WORKDIR="$WORKDIR_DEMO"
       cd "$WORKDIR/infra"
-      docker-compose -f "$COMPOSE_FILE_DEMO" build frontend
+      docker compose -f "$COMPOSE_FILE_DEMO" build frontend
 
 deploy_demo:
   stage: deploy_demo
@@ -528,9 +528,9 @@ deploy_demo:
       retry_compose_up() {
         local tries=3
         local n=1
-        until docker-compose -f "$COMPOSE_FILE_DEMO" up -d --force-recreate --remove-orphans; do
+        until docker compose -f "$COMPOSE_FILE_DEMO" up -d --force-recreate --remove-orphans; do
           if [ "$n" -ge "$tries" ]; then
-            echo "docker-compose up failed after $tries attempts"
+            echo "docker compose up failed after $tries attempts"
             return 1
           fi
           echo "Deploy attempt $n failed, retrying..."
@@ -541,7 +541,7 @@ deploy_demo:
 
       validate_demo() {
         echo "Validating message-service DB connectivity..."
-        docker-compose -f "$COMPOSE_FILE_DEMO" exec -T message-service python - <<'PY'
+        docker compose -f "$COMPOSE_FILE_DEMO" exec -T message-service python - <<'PY'
       import os, psycopg2
       conn = psycopg2.connect(
           host=os.getenv("SQL_DB_HOST"),
@@ -566,7 +566,7 @@ deploy_demo:
 
         echo "Frontend did not become ready in time"
         echo "Frontend logs:"
-        docker-compose -f "$COMPOSE_FILE_DEMO" logs --tail=100 frontend || true
+        docker compose -f "$COMPOSE_FILE_DEMO" logs --tail=100 frontend || true
         return 1
       }
 
@@ -583,7 +583,7 @@ deploy_demo:
       echo "Deploying already built images..."
       if ! retry_compose_up; then
         echo "Deployment failed"
-        docker-compose -f "$COMPOSE_FILE_DEMO" ps || true
+        docker compose -f "$COMPOSE_FILE_DEMO" ps || true
         docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
         exit 1
       fi
@@ -591,12 +591,12 @@ deploy_demo:
       echo "Validating demo deployment..."
       if ! validate_demo; then
         echo "Validation failed"
-        docker-compose -f "$COMPOSE_FILE_DEMO" ps || true
+        docker compose -f "$COMPOSE_FILE_DEMO" ps || true
         docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
         exit 1
       fi
 
-      docker-compose -f "$COMPOSE_FILE_DEMO" ps
+      docker compose -f "$COMPOSE_FILE_DEMO" ps
       docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
       echo "Root disk usage before cleanup:"

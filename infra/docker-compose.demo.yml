@@ -1,0 +1,61 @@
+name: spara-demo
+
+services:
+  redis:
+    image: redis:latest
+    container_name: spara-redis-demo
+    restart: always
+    networks:
+      - spara_demo_network
+    ports:
+      - "6380:6379"
+
+  message-service:
+    build:
+      context: ../message-service
+      dockerfile: Dockerfile
+    container_name: spara-message-service
+    restart: always
+    networks:
+      - spara_demo_network
+    depends_on:
+      - redis
+    ports:
+      - "8001:8000"
+    env_file:
+      - ../message-service/.env
+
+  llm-service:
+    build:
+      context: ../llm-service
+      dockerfile: Dockerfile
+    container_name: spara-llm-service-demo
+    restart: always
+    networks:
+      - spara_demo_network
+    depends_on:
+      - redis
+    env_file:
+      - ../llm-service/.env
+    environment:
+      REDIS_HOST: spara-redis-demo
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_MS_URL: https://demo.sparabot.com
+        VITE_MS_SOCKETIO_URL: wss://demo.sparabot.com
+    container_name: spara-frontend-demo
+    restart: always
+    networks:
+      - spara_demo_network
+    ports:
+      - "8808:80"
+    depends_on:
+      - message-service
+
+networks:
+  spara_demo_network:
+    external: true
