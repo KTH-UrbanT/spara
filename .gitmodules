@@ -7,3 +7,4 @@
 [submodule "llm-service"]
   path = llm-service
   url = https://github.com/KTH-UrbanT/spara-llm-service.git
+
