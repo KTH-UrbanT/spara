@@ -77,6 +77,7 @@ def _build_case(row: Dict[str, Any], index: int) -> Dict[str, Any]:
         "expected_route": ("expected_route", "route", "label"),
         "expected_agent": ("expected_agent", "agent"),
         "expected_behavior": ("expected_behavior", "behavior"),
+        "expected_answer": ("expected_answer", "reference_answer", "answer"),
         "brf_name": ("brf_name", "brf", "building_name"),
         "address": ("address", "official_address"),
         "expected_building_id": ("expected_building_id", "building_id"),
@@ -93,6 +94,14 @@ def _build_case(row: Dict[str, Any], index: int) -> Dict[str, Any]:
     expected_fields = _normalize_list(_first_present(row, "expected_fields", "fields"))
     if expected_fields:
         case["expected_fields"] = expected_fields
+
+    must_include = _normalize_list(_first_present(row, "must_include", "required_terms"))
+    if must_include:
+        case["must_include"] = must_include
+
+    must_not_include = _normalize_list(_first_present(row, "must_not_include", "forbidden_terms"))
+    if must_not_include:
+        case["must_not_include"] = must_not_include
 
     expected_clarification = _first_present(row, "expected_clarification", "needs_clarification")
     if expected_clarification not in (None, ""):

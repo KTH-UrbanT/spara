@@ -12,6 +12,7 @@ stages:
   - test
   - deploy_staging
   - deploy_demo
+  - benchmark_demo
 
 variables:
   DEPLOY_ROOT_TEST: "/home/gitlab-runner/spara-deploy"
@@ -613,3 +614,42 @@ deploy_demo:
 
       echo "Docker usage after cleanup:"
       docker system df || true
+
+run_demo_benchmark_report:
+  stage: benchmark_demo
+  tags:
+    - demo
+  resource_group: demo_deploy
+  needs:
+    - deploy_demo
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "demo"'
+      when: on_success
+    - when: never
+  script:
+    - |
+      set -euo pipefail
+      export WORKDIR="$WORKDIR_DEMO"
+
+      echo "Running demo benchmark suite against deployed demo build"
+      echo "Commit: $CI_COMMIT_SHA"
+      echo "Pipeline: $CI_PIPELINE_ID"
+
+      cd "$WORKDIR/infra"
+      BENCHMARK_EMAIL_TO="${BENCHMARK_EMAIL_RECIPIENTS:-${BENCHMARK_EMAIL_RECIPIENT:-shadaab@kth.se}}"
+
+      docker compose -f "$COMPOSE_FILE_DEMO" run --rm --no-deps \
+        -v "$WORKDIR:/workspace" \
+        -e BENCHMARK_EMAIL_ENABLED=true \
+        -e BENCHMARK_EMAIL_RECIPIENTS="$BENCHMARK_EMAIL_TO" \
+        -e BENCHMARK_EMAIL_SMTP_SERVER="${BENCHMARK_EMAIL_SMTP_SERVER:-}" \
+        -e BENCHMARK_EMAIL_SMTP_PORT="${BENCHMARK_EMAIL_SMTP_PORT:-587}" \
+        -e BENCHMARK_EMAIL_ACCOUNT="${BENCHMARK_EMAIL_ACCOUNT:-}" \
+        -e BENCHMARK_EMAIL_ADDRESS="${BENCHMARK_EMAIL_ADDRESS:-}" \
+        -e BENCHMARK_EMAIL_PASSWORD="${BENCHMARK_EMAIL_PASSWORD:-}" \
+        --entrypoint bash \
+        llm-service \
+        -lc 'cd /workspace && PYTHONPATH=/workspace/llm-service python evaluation/scripts/run_benchmark_suite.py'
+
+      test -f "$WORKDIR/evaluation/results/benchmark_report.md"
+      echo "Benchmark report stored at $WORKDIR/evaluation/results/benchmark_report.md"
