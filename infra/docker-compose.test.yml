@@ -63,6 +63,8 @@ services:
       - spara_test_network
     depends_on:
       - redis
+    env_file:
+      - ../llm-service/.env
     environment:
       REDIS_HOST: spara-redis-test
 
