@@ -15,13 +15,15 @@ Run a fixed mix of scenarios:
 - missing-address questions where SPARA should ask for clarification
 - multi-turn conversations
 - out-of-scope or handoff cases
+- readiness behavior checks from the readiness cases, including hallucination
+  traps, source transparency, stale-context/memory checks, and stress cases
 
 Each case records expected behavior and an expected-answer contract, not a
 perfect word-for-word reference answer. Example:
 
 ```json
 {"case_id":"GEN_001","question":"How can an apartment building reduce heating costs?","expected_route":"generic","expected_answer":"Explain practical heating-cost reduction steps, such as controls, ventilation checks, insulation, and avoiding guaranteed savings.","must_include":["heating"],"must_not_include":["guaranteed savings"],"case_type":"general_energy_advice"}
-{"case_id":"CLAR_MULTI_001","turns":[{"user":"What should our building prioritize?","expected_route":"clarification","expected_answer":"Ask for the full building address before giving personalized advice.","must_include":["address"]},{"user":"The address is Examplegatan 1","expected_route":"combined","expected_answer":"Use the address to retrieve building data and combine it with general advisory guidance."}],"case_type":"multi_turn_clarification"}
+{"case_id":"CLAR_MULTI_001","turns":[{"user":"What should our building prioritize?","expected_route":"clarification","expected_answer":"Ask for the full building address before giving personalized advice.","must_include":["address"]},{"user":"The address is [street address]","expected_route":"combined","expected_answer":"Use the address to retrieve building data and combine it with general advisory guidance."}],"case_type":"multi_turn_clarification"}
 ```
 
 Default cases live in:
@@ -29,6 +31,32 @@ Default cases live in:
 ```text
 evaluation/data/evaluation_cases.jsonl
 ```
+
+## Readiness Behavior Cases
+
+The normal evaluation now includes a focused readiness slice directly in
+`evaluation/data/evaluation_cases.jsonl`. These cases use IDs like
+`READINESS_A01...` through `READINESS_J02...` and mirror the behavior groups in
+`evaluation/READINESS_CHECKLIST.md`:
+
+- clarification and building identification
+- multi-address identity where street addresses are aliases and building ID /
+  `byggnadsid` is the source of truth
+- database lookup and latest building-context use
+- combined fact-plus-advice answers, especially Energy Conservation Measures
+  (ECMs) for heating-cost and energy-efficiency questions
+- routing between generic and building-specific questions
+- multi-turn memory
+- missing data, contradiction, and identity conflict behavior
+- out-of-scope financial/legal/vendor requests
+- hallucination traps such as fake quotes, fake audits, and OVK conclusions
+- efficiency/stress limits
+- source transparency and handover
+
+These rows run as part of the default benchmark suite. The simple
+`must_include` and `must_not_include` terms catch obvious failures, while the
+`expected_answer` and `expected_behavior` fields tell reviewers what good
+behavior should look like.
 
 ## EKR Question Bank Questions
 
@@ -122,8 +150,20 @@ It accepts comma, semicolon, or whitespace separated addresses.
 
 Energy advisors do not need the technical benchmark report.
 
+For the manual readiness checklist, use:
+
+```text
+evaluation/READINESS_CHECKLIST.md
+```
+
+It summarizes the review areas for clarification, building identification,
+building facts, combined advice, routing, multi-turn memory, missing data,
+out-of-scope requests, hallucination traps, stress cases, transparency, and
+handover. Keep exact prompts and private examples in the JSONL cases, not in
+Markdown docs.
+
 Pick a small set of representative SPARA dialogues, usually 8-12, and ask
-Hans/EKR to judge advisory quality:
+energy advisors to judge advisory quality:
 
 1. Is the answer technically correct? 1-5
 2. Is it useful for the homeowner or BRF? 1-5
@@ -151,7 +191,7 @@ GET /evaluation/export/?format=csv
 
 ## Role Split
 
-- Demo script: checks that the system behaves sensibly.
+- Demo scenario run: checks that the system behaves sensibly.
 - Developers/researchers: inspect routing, grounding, latency, safety, and failures.
 - Energy advisors: judge correctness, usefulness, clarity, and whether edits are needed.
 - BRF/users: provide realistic questions and simple ratings/comments.
@@ -166,3 +206,4 @@ GET /evaluation/export/?format=csv
 - `scripts/export_advisor_review_sheet.py`: blank review sheet for advisors.
 - `forms/advisor_review_template.csv`: rubric columns.
 - `PROTOCOL.md`: short human-evaluation protocol.
+- `READINESS_CHECKLIST.md`: manual readiness areas and expected behavior.

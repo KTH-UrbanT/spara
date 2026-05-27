@@ -20,14 +20,22 @@ and help advisors review or reuse the response?
 
 Purpose: catch obvious system problems before or after pushing to demo.
 
-Run 20-30 scripted scenarios covering:
+Run 20-30 fixed scenarios covering:
 
 - generic energy-advice questions
 - building-specific questions with an address
 - missing-address questions
+- multi-address questions where several addresses may map to one building ID
 - multi-turn clarification conversations
 - out-of-scope questions
 - handoff/report cases if relevant
+- readiness behavior questions from the benchmark cases, including
+  hallucination traps, source-transparency follow-ups, stale building-context
+  checks, and batch/stress requests
+
+The default `evaluation/data/evaluation_cases.jsonl` file includes these
+behavior questions as `READINESS_*` cases, so they run with the normal benchmark
+suite rather than only during manual testing.
 
 For each turn, record:
 
@@ -58,14 +66,32 @@ This is the developer/researcher check.
 
 Purpose: understand whether answers are useful and trustworthy in advisory work.
 
+The readiness checklist is part of this track and lives in:
+
+```text
+evaluation/READINESS_CHECKLIST.md
+```
+
+Use it before or alongside advisor review to check that SPARA handles
+clarification, building identification, database lookups, combined
+recommendations, multi-turn memory, missing data, out-of-scope requests,
+hallucination traps, stress tests, transparency, and handover.
+
+For BRF identity tests, building ID / `byggnadsid` is the source of truth and
+addresses are lookup aliases. For recommendation tests, heating-cost and
+energy-efficiency questions should be treated as Energy Conservation Measures
+(ECM) questions when a building context is available.
+
 Advisors should review only a small, curated set of dialogues. They do not need
 to inspect technical details like tokens, latency, baselines, or F1 scores.
 
 Recommended size:
 
-- 8-12 dialogues for Hans/EKR review
+- 8-12 dialogues for energy-advisor review
 - include at least one generic, one building-specific, one missing-info, one
   multi-turn, and one boundary/out-of-scope case
+- include at least one hallucination-trap case and one transparency/source case
+  from the readiness cases
 
 Advisor rubric:
 
@@ -89,6 +115,24 @@ Optional issue tags:
 - should have asked for clarification
 - should have escalated
 
+Human readiness scoring:
+
+```text
+V = pass: meets expected behavior
+~ = partial: expected behavior is partly met, weak, or unclear
+X = fail: violates expected behavior, fabricates information, or behaves unsafely
+```
+
+For each readiness question, record:
+
+- precondition/context: no building context, known building, known BRF, or
+  previous answer exists
+- expected route and observed route
+- expected behavior and answer summary
+- result: V, X, or ~
+- severity and failure type
+- groundedness and whether human escalation was needed
+
 This is the energy-advisor evaluation.
 
 ## Track 3: Later Research Benchmark
@@ -109,7 +153,7 @@ This is not required for the immediate demo evaluation.
 
 Demo evaluation is done when:
 
-- the script runs successfully on the chosen scenario set
+- the scenario run completes successfully on the chosen scenario set
 - the email report is received
 - route mismatches and failed turns are visible
 - the report includes SPARA answers next to expected behavior
@@ -119,7 +163,7 @@ Demo evaluation is done when:
 
 Advisor review is done when:
 
-- Hans/EKR have reviewed the selected dialogues
+- energy advisors have reviewed the selected dialogues
 - each reviewed answer has correctness/usefulness/clarity scores
 - each reviewed answer is marked as as-is, minor edit, major edit, or no
 - important corrections are captured in free text
@@ -132,6 +176,6 @@ Advisor review is done when:
 | May 20, 2026 | Clean protocol and demo run flow ready |
 | May 25, 2026 | Internal pilot with colleagues |
 | June 1, 2026 | External/user testing starts |
-| June 15, 2026 | Reminder and Hans/EKR review material |
+| June 15, 2026 | Reminder and advisor review material |
 | June 20, 2026 | Test closes |
 | July 1, 2026 | Rough analysis complete |
