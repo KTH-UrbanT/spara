@@ -73,6 +73,18 @@ services:
       - CHOKIDAR_USEPOLLING=true # Added for hot reloading in Docker
     depends_on:
       - message-service
-
+  ############################
+  #  6) pgAdmin              #
+  ############################
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: spara-pgadmin-dev
+    ports:
+      - "8080:80"  # Maps port 8080 on your host to port 80 in the container
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com  # Set your admin email
+      PGADMIN_DEFAULT_PASSWORD: admin          # Set your admin password
+    depends_on:
+      - message_store
 volumes:
   message_store_data:
