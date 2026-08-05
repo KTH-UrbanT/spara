@@ -1,1436 +1,655 @@
-# ..######...####.########.##..........###....########.
-# .##....##...##.....##....##.........##.##...##.....##
-# .##.........##.....##....##........##...##..##.....##
-# .##...####..##.....##....##.......##.....##.########.
-# .##....##...##.....##....##.......#########.##.....##
-# .##....##...##.....##....##.......##.....##.##.....##
-# ..######...####....##....########.##.....##.########.
-#
-# Assembly Pipeline
-#
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: always
+    - if: '$CI_COMMIT_BRANCH == "demo"'
+      when: always
+    - when: never
 
 stages:
-  - prepare_staging
+  - prepare
+  - build
   - test
   - deploy_staging
-  - finish_staging
-  - prepare_production
-  - deploy_production
-  - finish_production
-  - finish_production
+  - deploy_demo
+  - benchmark_demo
 
 variables:
-  COMPOSE_FILE_TEST:          docker-compose.test.yml
-  COMPOSE_FILE_TEST_CI:       docker-compose.test.ci.yml
-  COMPOSE_FILE_PROD:          docker-compose.prod.yml
+  DEPLOY_ROOT_TEST: "/home/gitlab-runner/spara-deploy"
+  WORKDIR_TEST: "$DEPLOY_ROOT_TEST/current"
+  COMPOSE_FILE_TEST: "docker-compose.test.yml"
 
-  STAGING_HOST:               $SSH_STAGING_HOST
-  STAGING_USERNAME:           $SSH_STAGING_USERNAME
-  STAGING_KEY:                $SSH_STAGING_KEY
-  STAGING_REMOTE_PATH:        /home/ubuntu/spara
+  DEPLOY_ROOT_DEMO: "/home/gitlab-runner/spara-demo-deploy"
+  WORKDIR_DEMO: "$DEPLOY_ROOT_DEMO/current"
+  COMPOSE_FILE_DEMO: "docker-compose.demo.yml"
 
-  PRODUCTION_HOST:            $SSH_PRODUCTION_HOST
-  PRODUCTION_USERNAME:        $SSH_PRODUCTION_USERNAME
-  PRODUCTION_KEY:             $SSH_PRODUCTION_KEY
-  PRODUCTION_REMOTE_PATH:     /srv/odenlabs/spara
+  GIT_SUBMODULE_STRATEGY: none
+  DOCKER_BUILDKIT: "1"
+  COMPOSE_DOCKER_CLI_BUILD: "1"
+  TEST_NETWORK: "spara-ci-${CI_PIPELINE_ID}"
+  TEST_POSTGRES: "spara-ci-${CI_PIPELINE_ID}-postgres"
+  TEST_REDIS: "spara-ci-${CI_PIPELINE_ID}-redis"
 
-  SSH_GITHUB_PRIVATE_KEY:     $SSH_GITHUB_KEY
-  
-  # Container names
-  POSTGRES_CONTAINER_TEST:    spara-postgres-test
-  POSTGRES_CONTAINER_PROD:    spara-postgres
-  
-  # Validation URLs
-  STAGING_VALIDATION_URL:     https://test.sparabot.com/
-  PRODUCTION_VALIDATION_URL:  https://sparabot.com/
-  
-  # Tag tracking files for rollback capability
-  STAGING_TAG_FILE:                      ${STAGING_REMOTE_PATH}/cicd/last_successful_tag.txt
-  PRODUCTION_TAG_FILE:                   ${PRODUCTION_REMOTE_PATH}/cicd/last_successful_tag.txt
-  
-  STAGING_BACKUP_ARCHIVE:                ${STAGING_REMOTE_PATH}/cicd/db_backups
-  PRODUCTION_BACKUP_ARCHIVE:             ${PRODUCTION_REMOTE_PATH}/cicd/db_backups
-
-  # Instead of using the repository from GitLab,
-  # we get a fresh copy from GitHub. This reduces
-  # the requirements on the GitLab and was partially
-  # done to fix a version and speed issue.
-  GIT_STRATEGY: none
-
-# YAML anchor for common cleanup script template - parameterized for staging vs production
-.cleanup_script_base_template: &cleanup_script_base
-  - |
-    $SSH_CMD $CLEANUP_USERNAME@$CLEANUP_HOST <<EOF
-      set -euxo pipefail
-
-      echo "$CLEANUP_ENVIRONMENT cleanup..."
-      if [ -d "$CLEANUP_REMOTE_PATH/infra" ] && [ -f "$CLEANUP_REMOTE_PATH/infra/$CLEANUP_COMPOSE_FILE" ]; then
-        cd $CLEANUP_REMOTE_PATH/infra
-        
-        # Stop services based on environment
-        if [ "$CLEANUP_SERVICES" = "ALL" ]; then
-          echo "Stopping ALL services including database ($CLEANUP_ENVIRONMENT environment)..."
-          sudo docker compose -f $CLEANUP_COMPOSE_FILE stop || true
-          sudo docker compose -f $CLEANUP_COMPOSE_FILE rm -f || true
-          echo "Stopped and removed all services (frontend, message-service, llm-service, redis, postgres)."
-        else
-          echo "Stopping application services only (preserving databases)..."
-          sudo docker compose -f $CLEANUP_COMPOSE_FILE stop frontend message-service llm-service redis || true
-          sudo docker compose -f $CLEANUP_COMPOSE_FILE rm -f frontend message-service llm-service redis || true
-          echo "Stopped application services (frontend, message-service, llm-service, redis)."
-        fi
-
-        # Remove old application images to free space
-        sudo docker rmi spara-frontend:latest 2>/dev/null || true
-        sudo docker rmi spara-message-service:latest 2>/dev/null || true
-        sudo docker rmi spara-llm-service:latest 2>/dev/null || true
-
-        # Handle volume cleanup based on environment
-        if [ "$CLEANUP_VOLUMES" = "ALL" ]; then
-          echo "Clearing all data volumes ($CLEANUP_ENVIRONMENT environment)..."
-          sudo docker volume rm \$(sudo docker volume ls -q | grep redis) 2>/dev/null || true
-          sudo docker volume rm \$(sudo docker volume ls -q | grep postgres) 2>/dev/null || true
-          sudo docker volume rm \$(sudo docker volume ls -q | grep spara) 2>/dev/null || true
-          echo "Database and all data volumes have been removed ($CLEANUP_ENVIRONMENT environment)."
-        else
-          echo "Database service (postgres) and volumes remain untouched."
-        fi
-        
-        # Remove only Docker image tarballs older than 7 days to free up disk space
-        sudo find $CLEANUP_REMOTE_PATH -maxdepth 1 -name "*.tar" -mtime +7 -exec rm -f {} \; 2>/dev/null || true
-      else
-        echo "No existing deployment found or compose file not found."
-      fi
-
-      # Check disk usage and perform cleanup if necessary
-      USAGE=\$(df / | awk 'NR==2 {print \$5}' | tr -d '%')
-      if [ "\$USAGE" -gt 75 ]; then
-
-        echo "Disk usage before cleanup"
-        df -h /
-
-        echo "Safe Docker cleanup..."
-        # Remove stopped containers based on environment
-        sudo docker rm \$(sudo docker ps -aq -f status=exited) 2>/dev/null || true
-
-        # Remove dangling (untagged) images only
-        sudo docker rmi \$(sudo docker images -f dangling=true -q) 2>/dev/null || true
-
-        # Clean up /tmp and old logs (conservative approach)
-        find /tmp -mtime +7 -and -not -exec fuser -s {} ';' -exec rm -rf {} + 2>/dev/null || true
-        sudo find /var/log -type f -name "*.gz" -mtime +30 -delete 2>/dev/null || true
-
-        echo "Disk usage after cleanup:"
-        df -h /
-
-        USAGE=\$(df / | awk 'NR==2 {print \$5}' | tr -d '%')
-        if [ "\$USAGE" -gt 90 ]; then
-          echo "WARNING: Root filesystem is over 90% full. Manual intervention may be needed."
-          if [ "$CLEANUP_VOLUMES" = "ALL" ]; then
-            echo "All services and data volumes have been removed for $CLEANUP_ENVIRONMENT."
-          else
-            echo "Database volumes and data have been preserved."
-          fi
-        fi
-
-      else
-        echo "Disk usage is below 75%, no cleanup needed."
-      fi
-    EOF
-
-# YAML anchor for staging cleanup - sets all parameters and calls base script
-.cleanup_staging_script_template: &cleanup_staging_script
-  - CLEANUP_HOST="$STAGING_HOST"
-  - CLEANUP_USERNAME="$STAGING_USERNAME" 
-  - CLEANUP_REMOTE_PATH="$STAGING_REMOTE_PATH"
-  - CLEANUP_COMPOSE_FILE="$COMPOSE_FILE_TEST"
-  - CLEANUP_ENVIRONMENT="Staging"
-  - CLEANUP_SERVICES="ALL"
-  - CLEANUP_VOLUMES="ALL"
-  - *cleanup_script_base
-
-# YAML anchor for production cleanup - sets all parameters and calls base script
-.cleanup_production_script_template: &cleanup_production_script
-  - CLEANUP_HOST="$PRODUCTION_HOST"
-  - CLEANUP_USERNAME="$PRODUCTION_USERNAME"
-  - CLEANUP_REMOTE_PATH="$PRODUCTION_REMOTE_PATH" 
-  - CLEANUP_COMPOSE_FILE="$COMPOSE_FILE_PROD"
-  - CLEANUP_ENVIRONMENT="Production"
-  - CLEANUP_SERVICES="APP_ONLY"
-  - CLEANUP_VOLUMES="PRESERVE"
-  - *cleanup_script_base
-
-# YAML anchor for rollback cleanup - sets all parameters and calls base script
-.cleanup_rollback_script_template: &cleanup_rollback_script
-  - CLEANUP_HOST="$PRODUCTION_HOST"
-  - CLEANUP_USERNAME="$PRODUCTION_USERNAME"
-  - CLEANUP_REMOTE_PATH="$PRODUCTION_REMOTE_PATH" 
-  - CLEANUP_COMPOSE_FILE="$COMPOSE_FILE_PROD"
-  - CLEANUP_ENVIRONMENT="Production"
-  - CLEANUP_SERVICES="APP_ONLY"
-  - CLEANUP_VOLUMES="PRESERVE"
-  - *cleanup_script_base
-
-# YAML anchor for Docker installation check pattern
-.docker_install_check_template: &docker_install_check
-  - |
-    DOCKER_STATUS=$($SSH_CMD $TARGET_USERNAME@$TARGET_HOST 'command -v docker >/dev/null 2>&1 && echo "INSTALLED" || echo "NOT_INSTALLED"')
-    echo "Docker status: $DOCKER_STATUS"
-    
-    if [ "$DOCKER_STATUS" = "NOT_INSTALLED" ]; then
-      echo "Installing Docker..."
-      $SSH_CMD $TARGET_USERNAME@$TARGET_HOST <<'EOF'
-        set -euo pipefail
-        echo "Installing Docker and docker compose plugin..."
-        sudo apt update
-        sudo apt install -y ca-certificates curl gnupg lsb-release
-        sudo install -m 0755 -d /etc/apt/keyrings
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-        sudo chmod a+r /etc/apt/keyrings/docker.gpg
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-        sudo apt update
-        sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    EOF
-    else
-      echo "Docker already installed, skipping installation"
-    fi
-    
-    # Check Docker and Docker Compose versions
-    $SSH_CMD $TARGET_USERNAME@$TARGET_HOST 'docker compose version'
-
-# YAML anchor for file copy pattern
-.copy_files_template: &copy_files
-  - echo "Copying files to remote server (clean deployment)"
-  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "find $TARGET_REMOTE_PATH -mindepth 1 -maxdepth 1 ! -name cicd -exec sudo rm -rf {} +"
-  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "sudo mkdir -p $(dirname $TARGET_REMOTE_PATH)"
-  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "sudo mkdir -p $TARGET_REMOTE_PATH/message-service $TARGET_REMOTE_PATH/llm-service $TARGET_REMOTE_PATH/frontend"
-
-  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "sudo chown -R $TARGET_USERNAME:$TARGET_USERNAME $TARGET_REMOTE_PATH"
-
-  # Install rsync if not already installed
-  - |
-    if ! command -v rsync >/dev/null 2>&1; then
-      echo "rsync not found, installing...";
-      apk add --no-cache rsync;
-    fi
-  
-  # Use rsync for efficient incremental file transfer (SOURCE_PATH allows flexibility for rollback scenarios)
-  - rsync -az --delete -e "$SSH_CMD" ${SOURCE_PATH:-}infra/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/infra/
-
-  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}message-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service/.env
-  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}llm-service/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service/.env
-  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}frontend/.env $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend/.env
-
-  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}message-service${TAR_SUFFIX:-.tar} $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/message-service${TAR_SUFFIX:-.tar}
-  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}llm-service${TAR_SUFFIX:-.tar} $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/llm-service${TAR_SUFFIX:-.tar}
-  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}frontend${TAR_SUFFIX:-.tar} $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/frontend${TAR_SUFFIX:-.tar}
-  
-  # Copy migration service tar if it exists (for production deployments)
-  - |
-    if [ -f "${SOURCE_PATH:-}migration-service${TAR_SUFFIX:-.tar}" ]; then
-      rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}migration-service${TAR_SUFFIX:-.tar} $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/migration-service${TAR_SUFFIX:-.tar}
-    fi
-
-  - rsync -az -e "$SSH_CMD" ${SOURCE_PATH:-}shared/ $TARGET_USERNAME@$TARGET_HOST:$TARGET_REMOTE_PATH/shared/
-
-# YAML anchor for backup pattern (creates backup without pruning)
-.backup_postgres_template: &backup_postgres
-  - echo "=== BACKUP PHASE ==="
-  - echo "Backing up Postgres database with tag-based naming"
-  
-  # Get current assembly tag for backup naming
-  - CURRENT_ASSEMBLY_TAG="$ENVIRONMENT-$DEPLOYMENT_TAG"
-  - echo "Using assembly tag $CURRENT_ASSEMBLY_TAG"
-
-  # Create backup with tag-based name
-  - BACKUP_FILE="$TARGET_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
-  - echo "Creating backup file $BACKUP_FILE"
-  - |
-    $SSH_CMD $TARGET_USERNAME@$TARGET_HOST <<EOF
+prepare_environment:
+  stage: prepare
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+  script:
+    - |
       set -euo pipefail
-      echo "Creating backup directory $TARGET_BACKUP_ARCHIVE"
-      sudo mkdir -p $TARGET_BACKUP_ARCHIVE
 
-      # Check if the Postgres container exists and is running
-      if sudo docker ps --format '{{.Names}}' | grep -q "^$POSTGRES_CONTAINER\$"; then
-        echo "Waiting for Postgres to be ready..."
-        for i in {1..30}; do
-          if sudo docker exec $POSTGRES_CONTAINER pg_isready -U postgres; then
-            echo "Postgres is ready"
-            break
-          fi
-          echo "Waiting for Postgres... (\$i/30)"
-          sleep 5
-          if [ \$i -eq 30 ]; then
-            echo "Postgres did not become ready in time"
-            exit 1
-          fi
-        done
-        echo "Creating backup $BACKUP_FILE"
-        if sudo docker exec -i $POSTGRES_CONTAINER pg_dumpall -c -U postgres | sudo tee $BACKUP_FILE > /dev/null; then
-          echo "Backup created successfully"
-        else
-          echo "Backup failed, contents of backup file:"
-          sudo cat "$BACKUP_FILE"
-          exit 1
-        fi
-        ls -la "$BACKUP_FILE"
-      fi
-    EOF
+      export DEPLOY_ROOT="$DEPLOY_ROOT_TEST"
+      export WORKDIR="$WORKDIR_TEST"
 
-# YAML anchor for backup cleanup pattern (prunes old backups after successful deployment)
-.cleanup_old_backups_template: &cleanup_old_backups
-  - echo "Pruning old tagged Postgres backups, keeping only the last 10..."
-  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "ls -1t $TARGET_BACKUP_ARCHIVE/backup_*.sql | tail -n +11 | xargs -r rm --"
+      echo "Preparing TEST environment for branch $CI_COMMIT_BRANCH"
+      echo "Commit: $CI_COMMIT_SHA"
+      echo "Pipeline: $CI_PIPELINE_ID"
 
-# YAML anchor for failed backup cleanup pattern (removes current backup on deployment failure)
-.cleanup_failed_backup_template: &cleanup_failed_backup
-  - echo "Removing failed deployment backup $BACKUP_FILE..."
-  - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "rm -f $BACKUP_FILE || echo 'Backup file already removed or not found'"
+      test -n "$GITHUB_TOKEN"
+      git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+      git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
 
-# YAML anchor for loading Docker images
-.load_images_template: &load_images
-  - echo "Loading Docker images..."
-  - |
-    $SSH_CMD $TARGET_USERNAME@$TARGET_HOST <<EOF
+      cd "$CI_PROJECT_DIR"
+      git submodule sync --recursive
+      git submodule update --init --recursive
+
+      echo "Resolved submodule SHAs:"
+      git submodule status
+
+      rm -rf "$WORKDIR"
+      mkdir -p "$WORKDIR"
+
+      rsync -a --delete --exclude='.git' "$CI_PROJECT_DIR"/ "$WORKDIR"/
+
+      printf "%s" "$MESSAGE_ENV_FILE_TEST" > "$WORKDIR/message-service/.env"
+      printf "%s" "$LLM_ENV_FILE_TEST" > "$WORKDIR/llm-service/.env"
+
+      mkdir -p "$WORKDIR/frontend"
+      printf "%s\n" "${FRONTEND_ENV_FILE_TEST:-}" > "$WORKDIR/frontend/.env"
+
+      DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      printf "VITE_DEPLOYMENT_TAG=%s\n" "$DEPLOYMENT_TAG" >> "$WORKDIR/frontend/.env"
+      printf "VITE_BUILD_TIME=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$WORKDIR/frontend/.env"
+      printf "VITE_COMMIT_SHA=%s\n" "$CI_COMMIT_SHA" >> "$WORKDIR/frontend/.env"
+      printf "VITE_BRANCH=%s\n" "$CI_COMMIT_BRANCH" >> "$WORKDIR/frontend/.env"
+
+      chmod 600 \
+        "$WORKDIR/message-service/.env" \
+        "$WORKDIR/llm-service/.env" \
+        "$WORKDIR/frontend/.env"
+
+      echo "Frontend deployment metadata:"
+      grep '^VITE_' "$WORKDIR/frontend/.env"
+
+      test -f "$WORKDIR/message-service/Dockerfile"
+      test -f "$WORKDIR/llm-service/Dockerfile"
+      test -f "$WORKDIR/frontend/Dockerfile"
+      test -f "$WORKDIR/infra/$COMPOSE_FILE_TEST"
+
+build_message_service:
+  stage: build
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+  script:
+    - |
       set -euo pipefail
-      cd $TARGET_REMOTE_PATH
-      sudo docker load -i message-service-test.tar
-      sudo docker load -i llm-service-test.tar
-      sudo docker load -i frontend-test.tar
-    EOF
+      export WORKDIR="$WORKDIR_TEST"
+      cd "$WORKDIR/infra"
+      docker compose -f "$COMPOSE_FILE_TEST" build message-service
 
-# YAML anchor for loading production Docker images
-.load_images_prod_template: &load_images_prod
-  - echo "Loading production Docker images..."
-  - |
-    $SSH_CMD $TARGET_USERNAME@$TARGET_HOST <<EOF
+build_llm_service:
+  stage: build
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+  script:
+    - |
       set -euo pipefail
-      cd $TARGET_REMOTE_PATH
-      sudo docker load -i message-service-prod.tar
-      sudo docker load -i llm-service-prod.tar
-      sudo docker load -i frontend-prod.tar
-    EOF
+      export WORKDIR="$WORKDIR_TEST"
+      cd "$WORKDIR/infra"
+      docker compose -f "$COMPOSE_FILE_TEST" build llm-service
 
-# YAML anchor for deploy with retry pattern
-.deploy_with_retry_template: &deploy_with_retry
-  - echo "Starting deployment with retry logic..."
-  - |
-    SLEEPTIME_ONE=8
-    for attempt in 1 2 3 4 5; do
-      echo "Deployment attempt $attempt..."
-
-      if $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE up -d --no-deps"; then
-        echo "Services started successfully on attempt $attempt"
-        break
-      else
-        echo "Attempt $attempt failed"
-        if [ $attempt -lt 5 ]; then
-          echo "Cleaning up and waiting $SLEEPTIME_ONE seconds before retry..."
-          $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE stop frontend message-service llm-service || true"
-          $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE rm -f frontend message-service llm-service || true"
-          sleep $SLEEPTIME_ONE
-          SLEEPTIME_ONE=$((SLEEPTIME_ONE * 2))
-        else
-          echo "All deployment attempts failed"
-          exit 1
-        fi
-      fi
-    done
-
-    SLEEPTIME_TWO=4
-    for attempt in 1 2 3 4 5; do
-      echo "Starting migration service on attempt $attempt..."
-      if $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE up -d migration_service"; then
-        echo "Migration service started successfully"
-        break
-      else
-        echo "Attempt $attempt failed to start migration service"
-        if [ $attempt -lt 5 ]; then
-          # Do nothing...
-          :
-        else
-          echo "All attempts to start migration service failed"
-          exit 1
-        fi
-      fi
-    done
-
-# YAML anchor for validation pattern
-.validate_deployment_template: &validate_deployment
-  - echo "=== VALIDATION PHASE ==="
-  - apk add --no-cache curl
-  - |
-    echo "Validating deployment..."
-    for i in {1..30}; do
-      if curl -f -s $VALIDATION_URL > /dev/null; then
-        echo "Deployment validated successfully"
-        break
-      fi
-      echo "Attempt $i: Service not ready, waiting..."
-      sleep 10
-      if [ $i -eq 30 ]; then
-        echo "Deployment validation failed"
-        exit 1
-      fi
-    done
-
-# YAML anchor for recording success pattern
-.record_success_template: &record_success
-  - echo "=== RECORD SUCCESSFUL TAG ==="
-  - echo "Recording successful deployment tag $CURRENT_ASSEMBLY_TAG"
-  - |
-    $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "\
-      touch $TARGET_TAG_FILE && \
-      (cat $TARGET_TAG_FILE 2>/dev/null; echo '$CURRENT_ASSEMBLY_TAG') | tail -n 10 > $TARGET_TAG_FILE.tmp && \
-      mv $TARGET_TAG_FILE.tmp $TARGET_TAG_FILE"
-  - echo "Deployment completed successfully with tag $CURRENT_ASSEMBLY_TAG"
-
-# YAML anchor for production rollback pattern
-.rollback_production_template: &rollback_production
-  - echo "=== PRODUCTION ROLLBACK INITIATED ==="
-  - echo "Production deployment failed. Initiating rollback..."
-
-  # Setup SSH for later use
-  - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
-  
-  # Determine rollback strategy based on rollback type
-  - echo "Rollback type ${ROLLBACK_TYPE:-automatic}"
-  - |
-    if [ "${ROLLBACK_TYPE:-automatic}" = "manual" ]; then
-      ROLLBACK_STEPS=2
-      echo "Manual rollback: Going back $ROLLBACK_STEPS deployments to skip potentially problematic recent deployment"
-    else
-      ROLLBACK_STEPS=1
-      echo "Automatic rollback: Going back $ROLLBACK_STEPS deployment to last known good state"
-    fi
-  
-  # Show available deployment history
-  - echo "Available successful deployment history:"
-  - $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "cat $PRODUCTION_TAG_FILE 2>/dev/null | tail -n 10 | nl -v0" || echo "No deployment history found"
-  
-  # Get the target successful tag based on rollback steps
-  - echo "Retrieving target production tag ($ROLLBACK_STEPS steps back)..."
-  - LAST_SUCCESSFUL_TAG=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "tail -n $ROLLBACK_STEPS $PRODUCTION_TAG_FILE 2>/dev/null | head -n 1 || echo 'NONE'")
-  - echo "Target rollback tag $LAST_SUCCESSFUL_TAG"
-  - |
-    if [ "$LAST_SUCCESSFUL_TAG" = "NONE" ] || [ -z "$LAST_SUCCESSFUL_TAG" ]; then
-      echo "ERROR: Cannot rollback $ROLLBACK_STEPS deployment(s) - insufficient deployment history."
-      echo "Available deployments:"
-      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "cat $PRODUCTION_TAG_FILE 2>/dev/null || echo 'No deployment history'"
-      echo "Manual intervention required."
-      exit 1
-    fi
-  
-  # Find corresponding backup
-  - echo "Looking for backup file for tag $LAST_SUCCESSFUL_TAG"
-  - ROLLBACK_BACKUP_FILE="$PRODUCTION_BACKUP_ARCHIVE/backup_${LAST_SUCCESSFUL_TAG}.sql"
-  
-  # Verify backup exists
-  - |
-    BACKUP_EXISTS=$($SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "[ -f '$ROLLBACK_BACKUP_FILE' ] && echo 'YES' || echo 'NO'")
-    if [ "$BACKUP_EXISTS" = "NO" ]; then
-      echo "ERROR: Backup file $ROLLBACK_BACKUP_FILE not found."
-      echo "Available tagged backups:"
-      $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST "ls -la $PRODUCTION_BACKUP_ARCHIVE/ || echo 'No tagged backups found'"
-      echo "Manual intervention required."
-      exit 1
-    fi
-  
-  # Stop current failed services using the standard cleanup script
-  - echo "=== STOPPING FAILED SERVICES ==="
-  - echo "Using rollback cleanup script to stop failed services"
-  - *cleanup_rollback_script
-  
-  # Restore database, by first restarting the postgres container to clear all connections,
-  # then dropping and restoring the database from the backup.
-  # We restart to ensure no writes are happening during the restore.
-  - echo "=== RESTORING DATABASE ==="
-  - echo "Restoring database from backup $ROLLBACK_BACKUP_FILE"
-  - |
-    $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+build_frontend:
+  stage: build
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+  script:
+    - |
       set -euo pipefail
-      echo "Restarting postgres container to clear all connections..."
-      cd $PRODUCTION_REMOTE_PATH/infra
-      sudo docker compose -f $COMPOSE_FILE_PROD restart message_store
-      sleep 15
-      
-      echo "Verifying postgres is ready..."
-      for i in {1..30}; do
-        if sudo docker exec $POSTGRES_CONTAINER_PROD pg_isready -U postgres; then
-          echo "Postgres is ready"
+      export WORKDIR="$WORKDIR_TEST"
+      cd "$WORKDIR/infra"
+      docker compose -f "$COMPOSE_FILE_TEST" build frontend
+
+test_message_service:
+  stage: test
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+    - build_message_service
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+  script:
+    - |
+      set -euo pipefail
+      export WORKDIR="$WORKDIR_TEST"
+
+      cleanup() {
+        docker rm -f "$TEST_POSTGRES" "$TEST_REDIS" >/dev/null 2>&1 || true
+        docker network rm "$TEST_NETWORK" >/dev/null 2>&1 || true
+      }
+      trap cleanup EXIT
+
+      set -a
+      . "$WORKDIR/message-service/.env"
+      set +a
+
+      docker network create "$TEST_NETWORK" >/dev/null 2>&1 || true
+
+      echo "Starting isolated Postgres and Redis for message-service tests..."
+      docker run -d --name "$TEST_POSTGRES" --network "$TEST_NETWORK" \
+        -e POSTGRES_USER=postgres \
+        -e POSTGRES_PASSWORD=postgres \
+        postgres:13
+
+      docker run -d --name "$TEST_REDIS" --network "$TEST_NETWORK" redis:latest
+
+      echo "Waiting for Postgres server..."
+      for i in $(seq 1 30); do
+        if docker exec "$TEST_POSTGRES" pg_isready -U postgres >/dev/null 2>&1; then
+          echo "Postgres server is ready"
           break
         fi
-        echo "Waiting for Postgres to be ready... (\$i/30)"
+        echo "Waiting for Postgres... ($i/30)"
         sleep 2
-        if [ \$i -eq 30 ]; then
+        if [ "$i" -eq 30 ]; then
           echo "Postgres did not become ready in time"
           exit 1
         fi
       done
-      
-      echo "Dropping existing database..."
-      sudo docker exec -i $POSTGRES_CONTAINER_PROD psql -U postgres -c "DROP DATABASE IF EXISTS message_store;"
-      
-      echo "Restoring database from $ROLLBACK_BACKUP_FILE..."
-      sudo docker exec -i $POSTGRES_CONTAINER_PROD psql -U postgres < $ROLLBACK_BACKUP_FILE
-      
-      echo "Database restored successfully"
-    EOF
-  
-  # Fetch and deploy the previous successful version from Git
-  - echo "=== FETCHING PREVIOUS SUCCESSFUL VERSION ==="
-  - echo "Fetching and building application code from tag $LAST_SUCCESSFUL_TAG"
-  
-  # Clone the repository and checkout the successful tag
-  - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-  - git clone --recursive git@github.com:KTH-UrbanT/spara.git rollback_repo
-  - cd rollback_repo
-  
-  # Find the assembly tag from the same time period
-  - ASSEMBLY_TAG=$(git tag -l "passed_test-*" | grep -E "$(echo $LAST_SUCCESSFUL_TAG | cut -d'-' -f2-3)" | head -1)
-  - |
-    if [ -z "$ASSEMBLY_TAG" ]; then
-      echo "WARNING: Could not find matching assembly tag. Using main branch."
-      ASSEMBLY_TAG="main"
-    fi
-  - echo "Using assembly tag $ASSEMBLY_TAG"
-  
-  - git checkout "$ASSEMBLY_TAG"
-  - git submodule update --recursive
-  
-  # Inject .env files (they should be the same)
-  - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
-  - echo "$LLM_SERVICE_ENV" > llm-service/.env
-  
-  # Wait for Docker daemon to be ready
-  - echo "Waiting for Docker daemon to be ready..."
-  - |
-    for i in {1..30}; do
-      if docker info >/dev/null 2>&1; then
-        echo "Docker daemon is ready"
-        break
-      fi
-      echo "Waiting for Docker daemon... ($i/30)"
-      sleep 2
-      if [ $i -eq 30 ]; then
-        echo "Docker daemon did not become ready in time"
-        exit 1
-      fi
-    done
-  
-  # Build the Docker images for rollback
-  - echo "Building Docker images for rollback..."
-  - docker compose -f infra/$COMPOSE_FILE_PROD build --no-cache
-  
-  # Save images as tar files (using correct image names from compose)
-  - docker save -o message-service-prod.tar message-service:prod
-  - docker save -o llm-service-prod.tar llm-service:prod
-  - docker save -o frontend-prod.tar frontend:prod
-  - cd ..
-  
-  # Upload rollback images to production server (reusing standard anchor)
-  - TARGET_USERNAME="$PRODUCTION_USERNAME"
-  - TARGET_HOST="$PRODUCTION_HOST"
-  - TARGET_REMOTE_PATH="$PRODUCTION_REMOTE_PATH"
-  - SSH_KEY_PATH="~/.ssh/production_remote_key"
-  - SOURCE_PATH="rollback_repo/"
-  - TAR_SUFFIX="-prod.tar"
-  - *copy_files
-  
-  # Load rollback images on production server (reusing standard anchor)
-  - *load_images_prod
-  
-  # Deploy the rollback version
-  - echo "=== DEPLOYING ROLLBACK VERSION ==="
-  - |
-    $SSH_CMD $PRODUCTION_USERNAME@$PRODUCTION_HOST <<EOF
+
+      echo "Ensuring message_store database exists..."
+      docker exec -i "$TEST_POSTGRES" psql -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+      SELECT 'CREATE DATABASE message_store'
+      WHERE NOT EXISTS (
+        SELECT FROM pg_database WHERE datname = 'message_store'
+      )\gexec
+      SQL
+
+      echo "Creating app DB role in isolated Postgres..."
+      docker exec -i "$TEST_POSTGRES" psql -v ON_ERROR_STOP=1 -U postgres -d message_store <<SQL
+      DO \$\$
+      BEGIN
+         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${SQL_DB_USER}') THEN
+            CREATE ROLE ${SQL_DB_USER} LOGIN PASSWORD '${SQL_DB_PASSWORD}';
+         ELSE
+            ALTER ROLE ${SQL_DB_USER} WITH PASSWORD '${SQL_DB_PASSWORD}';
+         END IF;
+      END
+      \$\$;
+
+      GRANT CONNECT ON DATABASE message_store TO ${SQL_DB_USER};
+      GRANT USAGE ON SCHEMA public TO ${SQL_DB_USER};
+      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${SQL_DB_USER};
+      GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${SQL_DB_USER};
+
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public
+      GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${SQL_DB_USER};
+
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public
+      GRANT USAGE, SELECT ON SEQUENCES TO ${SQL_DB_USER};
+      SQL
+
+      echo "Running message-service tests..."
+      docker run --rm --network "$TEST_NETWORK" \
+        --env-file "$WORKDIR/message-service/.env" \
+        -e SQL_DB_HOST="$TEST_POSTGRES" \
+        -e SQL_DB_NAME="message_store" \
+        -e SQL_DB_PORT="5432" \
+        -e REDIS_HOST="$TEST_REDIS" \
+        --entrypoint bash \
+        spara-test-message-service \
+        -lc 'if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo "No tests directory found in message-service"; exit 1; fi'
+
+test_llm_service:
+  stage: test
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
+    - prepare_environment
+    - build_llm_service
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
+  script:
+    - |
       set -euo pipefail
-      cd $PRODUCTION_REMOTE_PATH/infra
-      
-      echo "Starting rollback deployment..."
-      sudo docker compose -f $COMPOSE_FILE_PROD up -d --no-deps
+      export WORKDIR="$WORKDIR_TEST"
 
-      echo "Verifying rollback deployment..."
-      sleep 10
-      sudo docker compose -f $COMPOSE_FILE_PROD ps
-    EOF
-  
-  - echo "=== ROLLBACK COMPLETED ==="
-  - echo "Successfully rolled back to tag $LAST_SUCCESSFUL_TAG"
-  - echo "Both application and database have been restored to last known good state."
-  - echo "Services should be fully operational."
+      cleanup() {
+        docker rm -f "$TEST_REDIS" >/dev/null 2>&1 || true
+        docker network rm "$TEST_NETWORK" >/dev/null 2>&1 || true
+      }
+      trap cleanup EXIT
 
-# The 'container_setup' job initializes the Git repository, installs necessary dependencies,
-# and prepares the environment for testing and deployment.
-before_script:
+      docker network create "$TEST_NETWORK" >/dev/null 2>&1 || true
 
-  # Set strict error handling
-  - set -euo pipefail
+      echo "Starting isolated Redis for llm-service tests..."
+      docker run -d --name "$TEST_REDIS" --network "$TEST_NETWORK" redis:latest
 
-  # Install needed CLIs (only if running on Alpine)
-  - |
-    if grep -qi alpine /etc/os-release; then
-      apk add --no-cache git openssh openssh-client
-    fi
+      echo "Running llm-service tests..."
+      docker run --rm --network "$TEST_NETWORK" \
+        --env-file "$WORKDIR/llm-service/.env" \
+        -e REDIS_HOST="$TEST_REDIS" \
+        --entrypoint bash \
+        spara-test-llm-service \
+        -lc 'if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo "No tests directory found in llm-service"; exit 1; fi'
 
-  # Prepare SSH dir and keys
-  - mkdir -p ~/.ssh
-  # Configure SSH multiplexing for faster connections (must be before any SSH/Git usage)
-  - echo -e "Host *\n  ControlMaster auto\n  ControlPath ~/.ssh/cm_socket_%r@%h:%p\n  ControlPersist 10m" > ~/.ssh/config
-  - chmod 600 ~/.ssh/config
-  # Add SSH keys
-  - echo "$SSH_GITHUB_PRIVATE_KEY" > ~/.ssh/github_key
-  - chmod 600 ~/.ssh/github_key
-  - echo "$STAGING_KEY" > ~/.ssh/staging_remote_key
-  - chmod 600 ~/.ssh/staging_remote_key
-  - echo "$PRODUCTION_KEY" > ~/.ssh/production_remote_key
-  - chmod 600 ~/.ssh/production_remote_key
-
-  # Store trusted hosts
-  - |
-    if [ -z "$STAGING_HOST" ] || [ -z "$PRODUCTION_HOST" ]; then
-      echo "STAGING_HOST and PRODUCTION_HOST must be set"
-      exit 1
-    fi
-  - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
-  - ssh-keyscan -H $STAGING_HOST >> ~/.ssh/known_hosts
-  - ssh-keyscan -H $PRODUCTION_HOST >> ~/.ssh/known_hosts
-
-  # Configure git user for all jobs
-  # Note that systems might claim the owner of the SSH key
-  # performs these automated actions.
-  - git config --global user.email "ci@sparabot.com"
-  - git config --global user.name "CI Bot"
-
-# Prepare The Environment
-#
-# Here we load the submodules as given, from GitHub (using SSH_GITHUB_PRIVATE_KEY).
-# We do this since GitHub allways has the latest versions, and pulling from
-# GitLab can lead to issues with submodule SHAs.
-# This job is from most files are sent as artifacts.
-prepare_environment:
-  stage: prepare_staging
-  image: alpine:3.18
-  interruptible: true
-  script:
-
-    # Set strict error handling
-    - set -euo pipefail
-
-    # Shallow clone the repository with some debugging
-    - ls
-    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-    - git clone --depth 1 --shallow-submodules --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git .
-    - git checkout "$CI_COMMIT_REF_NAME"
-
-    # Record exact SHAs of all submodules, as we will use
-    # these to tag the submodules later.
-    - echo "Recording submodule SHAs..."
-    - git submodule status > submodule_shas.env
-    - cat submodule_shas.env
-
-    # Inject content into .env files.
-    # WARNING: These are a typical source of error.
-    - echo "$MESSAGE_SERVICE_ENV" > message-service/.env
-    - echo "$LLM_SERVICE_ENV"     > llm-service/.env
-
-    # Generate deployment tag that will be used throughout the pipeline
-    - DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
-    - echo "DEPLOYMENT_TAG=$DEPLOYMENT_TAG" > deployment_info.env
-    
-    # Inject deployment info into frontend environment
-    - if [ ! -f frontend/.env ]; then touch frontend/.env; fi
-    - echo "VITE_DEPLOYMENT_TAG=$DEPLOYMENT_TAG" >> frontend/.env
-    - echo "VITE_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> frontend/.env
-    - echo "VITE_COMMIT_SHA=${CI_COMMIT_SHA}" >> frontend/.env
-    - echo "VITE_BRANCH=${CI_COMMIT_REF_NAME}" >> frontend/.env
-
-    # Final debugging
-    - ls
-
-  artifacts:
-    paths:
-      - ./
-    untracked: false
-    expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Build jobs
-#
-# We have multiple build jobs, one for each service, to
-# make use of parallelism.
-build_frontend:
-  stage: prepare_staging
-  image: docker:24.0-cli
-  interruptible: true
-  needs: 
+deploy_and_validate_remote_staging:
+  stage: deploy_staging
+  tags:
+    - sciencecloud
+  resource_group: test_deploy
+  needs:
     - prepare_environment
-  services:
-    - docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
-    # Set strict error handling
-    - set -euo pipefail
-
-    # Build the frontend image
-    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache frontend
-
-    # Save the Docker image as a tar file
-    - docker save -o frontend-test.tar frontend:test
-
-  artifacts:
-    paths:
-      - frontend-test.tar
-    expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-build_message_service:
-  stage: prepare_staging
-  image: docker:24.0-cli
-  interruptible: true
-  needs: 
-    - prepare_environment
-  services:
-    - docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
-    # Set strict error handling
-    - set -euo pipefail
-
-    # Build the message-service image
-    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache message-service
-
-    # Save the Docker image as a tar file
-    - docker save -o message-service-test.tar message-service:test
-
-  artifacts:
-    paths:
-      - message-service-test.tar
-    expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-build_llm_service:
-  stage: prepare_staging
-  image: docker:24.0-cli
-  interruptible: true
-  needs:  
-    - prepare_environment
-  services:
-    - docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
-    # Set strict error handling
-    - set -euo pipefail
-    # Build the llm-service image
-    - docker compose -f infra/$COMPOSE_FILE_TEST build --pull --no-cache llm-service
-    # Save the Docker image as a tar file
-    - docker save -o llm-service-test.tar llm-service:test
-
-  artifacts:
-    paths:
-      - llm-service-test.tar
-    expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-combine_build_images:
-  stage: prepare_staging
-  image: docker:24.0-cli
-  interruptible: true
-  needs: 
-    - prepare_environment
-    - build_frontend
     - build_message_service
     - build_llm_service
-  script:
-    # This job simply combines the built images into a single job
-    # so that they can be used in the test job.
-    # It is not strictly necessary, but it makes the pipeline cleaner.
-    - set -euo pipefail
-    - echo "Combining built jobs into a single job"
-  artifacts:
-    paths:
-      - frontend-test.tar
-      - message-service-test.tar
-      - llm-service-test.tar
-    reports:
-      dotenv: deployment_info.env
-    expire_in: 1 day
+    - build_frontend
+    - test_message_service
+    - test_llm_service
   rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Build jobs for production with different configurations
-build_frontend_prod:
-  stage: prepare_production
-  image: docker:24.0-cli
-  interruptible: true
-  needs: 
-    - merge_assembly_to_main
-    - prepare_environment
-  services:
-    - docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
+    - if: '$CI_COMMIT_BRANCH =~ /^test\/.+$/'
+      when: on_success
+    - when: never
   script:
-    # Set strict error handling
-    - set -euo pipefail
-
-    # Build the production frontend image with production URLs
-    - docker compose -f infra/$COMPOSE_FILE_PROD build --pull --no-cache frontend
-
-    # Save image as tar
-    - docker save -o frontend-prod.tar frontend:prod
-
-  artifacts:
-    paths:
-      - frontend-prod.tar
-    expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-build_message_service_prod:
-  stage: prepare_production
-  image: docker:24.0-cli
-  interruptible: true
-  needs: 
-    - merge_assembly_to_main
-    - prepare_environment
-  services:
-    - docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
-    # Set strict error handling
-    - set -euo pipefail
-
-    # Build the production message-service image
-    - docker compose -f infra/$COMPOSE_FILE_PROD build --pull --no-cache message-service
-
-    # Tag the image as tar
-    - docker save -o message-service-prod.tar message-service:prod
-
-  artifacts:
-    paths:
-      - message-service-prod.tar
-    expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-build_llm_service_prod:
-  stage: prepare_production
-  image: docker:24.0-cli
-  interruptible: true
-  needs:  
-    - merge_assembly_to_main
-    - prepare_environment
-  services:
-    - docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
-    # Set strict error handling
-    - set -euo pipefail
-    
-    # Build the production llm-service image
-    - docker compose -f infra/$COMPOSE_FILE_PROD build --pull --no-cache llm-service
-    
-    # Tag the image as tar
-    - docker save -o llm-service-prod.tar llm-service:prod
-
-  artifacts:
-    paths:
-      - llm-service-prod.tar
-    expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-combine_build_images_prod:
-  stage: prepare_production
-  image: docker:24.0-cli
-  interruptible: true
-  needs: 
-    - prepare_environment
-    - build_frontend_prod
-    - build_message_service_prod
-    - build_llm_service_prod
-  script:
-    # This job combines the production built images into a single job
-    - set -euo pipefail
-    - echo "Combining production built jobs into a single job"
-  artifacts:
-    paths:
-      - frontend-prod.tar
-      - message-service-prod.tar
-      - llm-service-prod.tar
-    reports:
-      dotenv: deployment_info.env
-    expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Test All Services
-#
-# Tests all services in dependency order:
-# message-service and llm-service first (both depend on redis),
-# then frontend (depends on message-service).
-test_all_services:
-  stage: test
-  image: docker:24.0-cli
-  interruptible: true
-  needs:
-    - combine_build_images
-    - prepare_environment
-  services:
-    - docker:dind
-  variables:
-    GIT_STRATEGY: none # Don't clone the repo, rely on artifacts (might be redundant copy)
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-  script:
-
-    # Set strict error handling
-    - set -euo pipefail
-
-    # Load all Docker images
-    - docker load -i message-service-test.tar
-    - docker load -i llm-service-test.tar
-    - docker load -i frontend-test.tar
-
-    # Start dependencies first (redis and postgres)
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d redis message_store
-    
-    # Test message-service (depends on redis and postgres)
-    - echo "Testing message-service..."
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d message-service
-    - docker compose -f infra/$COMPOSE_FILE_TEST exec message-service bash -c "if [ -d tests ]; then PYTHONPATH=/message-service pytest tests/; else echo 'No tests directory found.'; fi"
-    
-    # Test llm-service (depends on redis)
-    - echo "Testing llm-service..."
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d llm-service
-    - docker compose -f infra/$COMPOSE_FILE_TEST exec llm-service bash -c "if [ -d tests ]; then PYTHONPATH=/llm-service pytest tests/; else echo 'No tests directory found.'; fi"
-    
-    # Test frontend (depends on message-service)
-    - echo "Testing frontend..."
-    - docker compose -f infra/$COMPOSE_FILE_TEST up -d frontend
-    - echo "Frontend tests placeholder"
-    
-    # Generate tag names for later use in tagging job
-    - touch combined_tags.env
-
-    - MESSAGE_TAG="passed_test-$DEPLOYMENT_TAG"
-    - LLM_TAG="passed_test-$DEPLOYMENT_TAG"
-    - FRONTEND_TAG="passed_test-$DEPLOYMENT_TAG"
-
-    - echo "MESSAGE_SERVICE_TAG=$MESSAGE_TAG" >> combined_tags.env
-    - echo "LLM_SERVICE_TAG=$LLM_TAG" >> combined_tags.env
-    - echo "FRONTEND_TAG=$FRONTEND_TAG" >> combined_tags.env
-  artifacts:
-    reports:
-      dotenv: combined_tags.env
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Deploy And Validate Remote Staging
-#
-# Combined remote operations - cleanup, sync, deploy, and validate.
-# This job holds the remote_staging resource lock from beginning to end.
-# Only runs after tests pass successfully on GitLab servers.
-deploy_and_validate_remote_staging:
-  needs:
-    - combine_build_images
-    - prepare_environment
-    - test_all_services  # Wait for tests to pass before deploying
-  stage: deploy_staging
-  image: alpine:3.18
-  resource_group: remote_staging
-  interruptible: true  # Don't interrupt deployment once started
-  script:
-
-    # Set strict error handling
-    - set -euo pipefail
-    
-    # Step 1: Backup Postgres (before cleanup removes it)
-    - echo "=== BACKUP PHASE ==="
-    - echo "Backing up staging database before cleanup"
-    - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
-    - TARGET_USERNAME="$STAGING_USERNAME"
-    - TARGET_HOST="$STAGING_HOST"
-    - TARGET_BACKUP_ARCHIVE="$STAGING_BACKUP_ARCHIVE"
-    - TARGET_REMOTE_PATH="$STAGING_REMOTE_PATH"
-    - ENVIRONMENT="staging"
-    - POSTGRES_CONTAINER="$POSTGRES_CONTAINER_TEST"
-    - *backup_postgres
-
-    # Step 2: Cleanup (remove all services including postgres)
-    - echo "=== CLEANUP PHASE ==="
-    - echo "Cleaning up staging server before deployment"
-    - *cleanup_staging_script
-
-    # Step 3: Copy files to staging server
-    - echo "=== SYNC PHASE ==="
-    - SSH_KEY_PATH="~/.ssh/staging_remote_key"
-    - TAR_SUFFIX="-test.tar"
-    - *copy_files
-
-    # Step 4: Deploy on Staging Server
-    - echo "=== DEPLOY PHASE ==="
-    - echo "Deploying to staging server"
-    - *docker_install_check
-    - *load_images
-    
-    # Run database migrations
-    - export COMPOSE_FILE="$COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI"
-
-    # Start the services using Docker Compose with retry logic
-    - *deploy_with_retry
-
-    # Verify the deployment
-    - echo "Verifying deployment..."
-    - sleep 15
-    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_TEST -f $COMPOSE_FILE_TEST_CI ps"
-
-    # Step 5: Validate Deployment
-    - VALIDATION_URL="$STAGING_VALIDATION_URL"
-    - *validate_deployment
-
-  artifacts:
-    reports:
-      dotenv: deployment_info.env
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Tag Submodules
-#
-# Tag the submodules and the assembly repo. after successful tests.
-tag_submodules:
-  stage: finish_staging
-  image: alpine:3.18
-  interruptible: false  # Don't interrupt tagging once started
-  needs:
-    - deploy_and_validate_remote_staging
-    - test_all_services                     # To get the tag names from dotenv
-    - prepare_environment                   # To get submodule SHAs
-  script:
-    # Set strict error handling
-    - set -euo pipefail
-
-    - echo "Tested submodule tags $MESSAGE_SERVICE_TAG, $LLM_SERVICE_TAG, $FRONTEND_TAG"
-    
-    # Fresh clone for tagging (full depth needed for git operations)
-    # Note that we clone into another directory to avoid conflicts,
-    # as we allready have the repository in the current directory.
-    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-    - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git tagging_repo
-    - cd tagging_repo
-    
-    # Tag each submodule at locked SHA.
-    # We use the SHAs from the submodule_shas.env file,
-    - echo "Reading submodule SHAs from submodule_shas.env..."
     - |
-      for name in message-service llm-service frontend; do
-        SHA=$(grep "$name" ../submodule_shas.env | awk '{print $1}')
-        TAG_VAR_NAME=$(echo "$name" | tr 'a-z-' 'A-Z_' )_TAG
-        TAG_VALUE=$(eval echo \$$TAG_VAR_NAME)
+      set -euo pipefail
+      export WORKDIR="$WORKDIR_TEST"
 
-        # Tag the submodule at the specified SHA
-        echo "Tagging $name at SHA $SHA with tag $TAG_VALUE"
-        cd "$name"
-        ls
-        git fetch origin
-        git checkout "$SHA"
-        git tag -a "$TAG_VALUE" -m "Tested version from assembly pipeline ${CI_PIPELINE_ID}"
-        git push origin "$TAG_VALUE"
-        cd ..
-      done
-
-    # Tag the assembly repo and push it.
-    - ASSEMBLY_TAG="passed_test-$DEPLOYMENT_TAG"
-    - echo "Creating assembly release tag $ASSEMBLY_TAG"
-    - git tag -a "$ASSEMBLY_TAG" -m "Assembly release from pipeline ${CI_PIPELINE_ID}"
-    - git push origin "$ASSEMBLY_TAG"
-
-    # Export the assembly tag for the manual merge job (manual trigger).
-    - echo "ASSEMBLY_TAG=$ASSEMBLY_TAG" > ../assembly_tag.env
-
-    # Clean up old tags (keep only last 10 tags for each component and pattern)
-    - echo "=== CLEANING UP OLD TAGS ==="
-    - |
-      for name in message-service llm-service frontend; do
-        echo "Cleaning up old tags for $name..."
-        cd "$name"
-        
-        # Clean up passed_test-* tags (keep last 10)
-        PASSED_TEST_TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
-        if [ -n "$PASSED_TEST_TAGS_TO_DELETE" ]; then
-          echo "Deleting old passed_test-* tags for $name: $PASSED_TEST_TAGS_TO_DELETE"
-          for tag in $PASSED_TEST_TAGS_TO_DELETE; do
-            git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
-          done
-        else
-          echo "No old passed_test-* tags to delete for $name"
-        fi
-        
-        cd ..
-      done
-      
-      # Clean up assembly repo tags as well
-      echo "Cleaning up old assembly tags..."
-      
-      # Clean up passed_test-* assembly tags (keep last 10)
-      ASSEMBLY_PASSED_TEST_TAGS_TO_DELETE=$(git tag -l "passed_test-*" --sort=-creatordate | tail -n +11)
-      if [ -n "$ASSEMBLY_PASSED_TEST_TAGS_TO_DELETE" ]; then
-        echo "Deleting old passed_test-* assembly tags: $ASSEMBLY_PASSED_TEST_TAGS_TO_DELETE"
-        for tag in $ASSEMBLY_PASSED_TEST_TAGS_TO_DELETE; do
-          git push origin --delete "$tag" || echo "Failed to delete tag $tag (may not exist on remote)"
+      retry_compose_up() {
+        local tries=3
+        local n=1
+        until docker compose -f "$COMPOSE_FILE_TEST" up -d --force-recreate --remove-orphans; do
+          if [ "$n" -ge "$tries" ]; then
+            echo "docker compose up failed after $tries attempts"
+            return 1
+          fi
+          echo "Deploy attempt $n failed, retrying..."
+          n=$((n+1))
+          sleep 10
         done
+      }
+
+      validate_staging() {
+        echo "Validating message-service DB connectivity..."
+        docker exec -i spara-message-service python - <<'PY'
+      import os, psycopg2
+      conn = psycopg2.connect(
+          host=os.getenv("SQL_DB_HOST"),
+          dbname=os.getenv("SQL_DB_NAME"),
+          user=os.getenv("SQL_DB_USER"),
+          password=os.getenv("SQL_DB_PASSWORD"),
+          port=os.getenv("SQL_DB_PORT"),
+      )
+      print("Deployed message-service DB connection OK")
+      conn.close()
+      PY
+
+        echo "Validating frontend..."
+        for i in $(seq 1 20); do
+          if curl -fsS http://127.0.0.1:8808 >/dev/null; then
+            echo "Frontend is reachable"
+            return 0
+          fi
+          echo "Waiting for frontend... ($i/20)"
+          sleep 3
+        done
+
+        echo "Frontend did not become ready in time"
+        echo "Frontend logs:"
+        docker logs --tail 100 spara-frontend-test || true
+        return 1
+      }
+
+      echo "Deploying tested branch $CI_COMMIT_BRANCH"
+      echo "Commit: $CI_COMMIT_SHA"
+
+      docker network inspect spara_test_network >/dev/null 2>&1 || docker network create spara_test_network
+
+      echo "Docker usage before deploy:"
+      docker system df || true
+
+      cd "$WORKDIR/infra"
+
+      echo "Backing up staging DB before deploy..."
+      if docker ps --format '{{.Names}}' | grep -qx spara-postgres-test; then
+        docker exec spara-postgres-test pg_dump -U postgres -d message_store -Fc > /tmp/spara-staging-backup.dump
       else
-        echo "No old passed_test-* assembly tags to delete"
+        rm -f /tmp/spara-staging-backup.dump
       fi
 
-  artifacts:
-    reports:
-      dotenv: assembly_tag.env
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Record Staging Success
-#
-# Records successful staging deployment and cleans up old backups.
-# Only runs after successful staging deployment and validation.
-record_staging_success:
-  stage: finish_staging
-  image: alpine:3.18
-  resource_group: remote_staging
-  interruptible: false  # Don't interrupt success recording once started
-  needs:
-    - deploy_and_validate_remote_staging
-    - prepare_environment  # To get deployment info
-  script:
-    # Set strict error handling
-    - set -euo pipefail
-
-    # Setup SSH and variables
-    - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
-    - TARGET_USERNAME="$STAGING_USERNAME"
-    - TARGET_HOST="$STAGING_HOST"
-    - TARGET_BACKUP_ARCHIVE="$STAGING_BACKUP_ARCHIVE"
-    - TARGET_TAG_FILE="$STAGING_TAG_FILE"
-    - ENVIRONMENT="staging"
-    - CURRENT_ASSEMBLY_TAG="$ENVIRONMENT-$DEPLOYMENT_TAG"
-
-    # Record successful deployment tag
-    - *record_success
-
-    # Clean up old backups now that deployment is confirmed successful
-    - *cleanup_old_backups
-
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Cleanup On Failure
-#
-# Cleanup job that runs only on pipeline failure. We do this to
-# ensure that the staging server is cleaned up even if the
-# deployment fails (quicker run next time).
-cleanup_on_failure:
-  stage: finish_staging
-  image: alpine:3.18
-  resource_group: remote_staging
-  interruptible: false  # Don't interrupt cleanup once started
-  needs:
-    - deploy_and_validate_remote_staging
-    - prepare_environment  # To get deployment info
-  script: 
-    # Set strict error handling
-    - set -euo pipefail
-
-    # Setup SSH and variables for cleanup
-    - export SSH_CMD="ssh -i ~/.ssh/staging_remote_key -o StrictHostKeyChecking=no"
-    - TARGET_USERNAME="$STAGING_USERNAME"
-    - TARGET_HOST="$STAGING_HOST"
-    - TARGET_BACKUP_ARCHIVE="$STAGING_BACKUP_ARCHIVE"
-    - ENVIRONMENT="staging"
-    - CURRENT_ASSEMBLY_TAG="$ENVIRONMENT-$DEPLOYMENT_TAG"
-    - BACKUP_FILE="$TARGET_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
-
-    # Clean up staging environment
-    - *cleanup_staging_script
-
-    # Remove the failed deployment backup
-    - *cleanup_failed_backup
-
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-      when: on_failure
-
-# Cleanup Production On Failure
-#
-# Cleanup job that runs only on production deployment failure.
-# Removes the failed backup and optionally cleans up failed deployment artifacts.
-cleanup_production_on_failure:
-  stage: finish_production
-  image: alpine:3.18
-  resource_group: remote_production
-  interruptible: false  # Don't interrupt cleanup once started
-  needs:
-    - deploy_and_validate_remote_production
-    - prepare_environment  # To get deployment info
-  script: 
-    # Set strict error handling
-    - set -euo pipefail
-
-    # Setup SSH and variables for cleanup
-    - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
-    - TARGET_USERNAME="$PRODUCTION_USERNAME"
-    - TARGET_HOST="$PRODUCTION_HOST"
-    - TARGET_BACKUP_ARCHIVE="$PRODUCTION_BACKUP_ARCHIVE"
-    - ENVIRONMENT="production"
-    - CURRENT_ASSEMBLY_TAG="$ENVIRONMENT-$DEPLOYMENT_TAG"
-    - BACKUP_FILE="$TARGET_BACKUP_ARCHIVE/backup_${CURRENT_ASSEMBLY_TAG}.sql"
-
-    # Remove the failed deployment backup
-    - *cleanup_failed_backup
-
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-      when: on_failure
-
-# Merge Assembly To Main
-#
-# Manually triggered job to merge the assembly repo to main.
-# This job must be manually triggered after successful tagging
-# due to its high impact on the project.
-merge_assembly_to_main:
-  stage: prepare_production
-  image: alpine:3.18
-  resource_group: remote_staging
-  needs:
-    - prepare_environment # To get the assembly repo
-    - tag_submodules  # To get the assembly tag
-    - test_all_services  # To get the tag names from dotenv
-  script:
-
-    # Set strict error handling
-    - set -euo pipefail
-
-    - echo "Merging assembly tag $ASSEMBLY_TAG to main branch and submodule tags to main"
-
-    # Fresh clone for merging (full depth needed for git operations)
-    # Note that we clone into another directory to avoid conflicts,
-    # despite not having imported any artifacts through the use of "needs".
-    - export GIT_SSH_COMMAND="ssh -i ~/.ssh/github_key -o StrictHostKeyChecking=no"
-    - git clone --recursive --branch "$CI_COMMIT_REF_NAME" git@github.com:KTH-UrbanT/spara.git merge_repo
-    - cd merge_repo
-    
-    # First, merge the submodules to main
-    # Note that we could change this to get the tag names from a dotenv file
-    - echo "Merging submodule tags to main..."
-    - |
-      for name in message-service llm-service frontend; do
-        TAG_VAR_NAME=$(echo "$name" | tr 'a-z-' 'A-Z_' )_TAG
-        TAG_VALUE=$(eval echo \$$TAG_VAR_NAME)
-
-        echo "Merging $name tag $TAG_VALUE to main"
-        cd "$name"
-        git fetch origin
-        git checkout main
-
-        # Check if tag is already merged
-        if git merge-base --is-ancestor "$TAG_VALUE" main; then
-          echo "Tag $TAG_VALUE is already merged into main for $name"
-        else
-          echo "Merging tag $TAG_VALUE into main for $name"
-          git merge --no-ff "$TAG_VALUE" -m "Merge tested tag $TAG_VALUE to main"
-          git push origin main
-        fi
-
-        cd ..
-      done
-    
-    # Then merge the assembly repo's current state/tag to main and push it.
-    - git fetch origin main
-    - git checkout main
-    - |
-      if git merge-base --is-ancestor "$ASSEMBLY_TAG" main; then
-        echo "Assembly tag $ASSEMBLY_TAG is already merged into main"
-      else
-        echo "Merging assembly tag $ASSEMBLY_TAG into main"
-        git merge --no-ff "$ASSEMBLY_TAG" -m "Merge assembly release $ASSEMBLY_TAG to main"
-        git push origin main
+      echo "Deploying already built images..."
+      if ! retry_compose_up; then
+        echo "Deployment failed"
+        docker compose -f "$COMPOSE_FILE_TEST" ps || true
+        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+        exit 1
       fi
 
-    - echo "Successfully merged assembly tag $ASSEMBLY_TAG and all submodule tags to main"
+      echo "Validating staging deployment..."
+      if ! validate_staging; then
+        echo "Validation failed"
+        docker compose -f "$COMPOSE_FILE_TEST" ps || true
+        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+        exit 1
+      fi
 
+      docker compose -f "$COMPOSE_FILE_TEST" ps
+      docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+      echo "Root disk usage before cleanup:"
+      df -h /
+
+      echo "Docker usage before cleanup:"
+      docker system df || true
+
+      echo "Cleaning Docker build cache only..."
+      docker builder prune -af --filter "until=168h" || true
+
+      echo "Root disk usage after cleanup:"
+      df -h /
+
+      echo "Docker usage after cleanup:"
+      docker system df || true
+
+prepare_demo_environment:
+  stage: prepare
+  tags:
+    - demo
+  resource_group: demo_deploy
   rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+    - if: '$CI_COMMIT_BRANCH == "demo"'
+      when: on_success
+    - when: never
+  script:
+    - |
+      set -euo pipefail
+
+      export DEPLOY_ROOT="$DEPLOY_ROOT_DEMO"
+      export WORKDIR="$WORKDIR_DEMO"
+
+      echo "Preparing DEMO environment for branch $CI_COMMIT_BRANCH"
+      echo "Commit: $CI_COMMIT_SHA"
+      echo "Pipeline: $CI_PIPELINE_ID"
+
+      test -n "$GITHUB_TOKEN"
+      git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+      git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+
+      cd "$CI_PROJECT_DIR"
+      git submodule sync --recursive
+      git submodule update --init --recursive
+
+      echo "Resolved submodule SHAs:"
+      git submodule status
+
+      rm -rf "$WORKDIR"
+      mkdir -p "$WORKDIR"
+
+      rsync -a --delete --exclude='.git' "$CI_PROJECT_DIR"/ "$WORKDIR"/
+
+      printf "%s" "$MESSAGE_ENV_FILE_DEMO" > "$WORKDIR/message-service/.env"
+      printf "%s" "$LLM_ENV_FILE_DEMO" > "$WORKDIR/llm-service/.env"
+
+      mkdir -p "$WORKDIR/frontend"
+      printf "%s\n" "${FRONTEND_ENV_FILE_DEMO:-}" > "$WORKDIR/frontend/.env"
+
+      DEPLOYMENT_TAG="$(date +%Y%m%d-%H%M%S)-${CI_PIPELINE_ID}"
+      printf "VITE_DEPLOYMENT_TAG=%s\n" "$DEPLOYMENT_TAG" >> "$WORKDIR/frontend/.env"
+      printf "VITE_BUILD_TIME=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$WORKDIR/frontend/.env"
+      printf "VITE_COMMIT_SHA=%s\n" "$CI_COMMIT_SHA" >> "$WORKDIR/frontend/.env"
+      printf "VITE_BRANCH=%s\n" "$CI_COMMIT_BRANCH" >> "$WORKDIR/frontend/.env"
+
+      chmod 600 \
+        "$WORKDIR/message-service/.env" \
+        "$WORKDIR/llm-service/.env" \
+        "$WORKDIR/frontend/.env"
+
+      echo "Frontend deployment metadata:"
+      grep '^VITE_' "$WORKDIR/frontend/.env"
+
+      test -f "$WORKDIR/message-service/Dockerfile"
+      test -f "$WORKDIR/llm-service/Dockerfile"
+      test -f "$WORKDIR/frontend/Dockerfile"
+      test -f "$WORKDIR/infra/$COMPOSE_FILE_DEMO"
+
+build_demo_message_service:
+  stage: build
+  tags:
+    - demo
+  resource_group: demo_deploy
+  needs:
+    - prepare_demo_environment
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "demo"'
+      when: on_success
+    - when: never
+  script:
+    - |
+      set -euo pipefail
+      export WORKDIR="$WORKDIR_DEMO"
+      cd "$WORKDIR/infra"
+      docker compose -f "$COMPOSE_FILE_DEMO" build message-service
+
+build_demo_llm_service:
+  stage: build
+  tags:
+    - demo
+  resource_group: demo_deploy
+  needs:
+    - prepare_demo_environment
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "demo"'
+      when: on_success
+    - when: never
+  script:
+    - |
+      set -euo pipefail
+      export WORKDIR="$WORKDIR_DEMO"
+      cd "$WORKDIR/infra"
+      docker compose -f "$COMPOSE_FILE_DEMO" build llm-service
+
+build_demo_frontend:
+  stage: build
+  tags:
+    - demo
+  resource_group: demo_deploy
+  needs:
+    - prepare_demo_environment
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "demo"'
+      when: on_success
+    - when: never
+  script:
+    - |
+      set -euo pipefail
+      export WORKDIR="$WORKDIR_DEMO"
+      cd "$WORKDIR/infra"
+      docker compose -f "$COMPOSE_FILE_DEMO" build frontend
+
+deploy_demo:
+  stage: deploy_demo
+  tags:
+    - demo
+  resource_group: demo_deploy
+  needs:
+    - prepare_demo_environment
+    - build_demo_message_service
+    - build_demo_llm_service
+    - build_demo_frontend
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "demo"'
       when: manual
-
-# Deploy And Validate Remote Production
-#
-# On commit to main branch, we clean the production deployment server,
-# similar to how we do it for the test branch. Clone and then
-# deploy to production.
-#
-# Note that this job can trigger on hot-fixes and unfortionately
-# also on merges to main, so we need to be careful
-# (highlighting importance of well informed developers).
-deploy_and_validate_remote_production:
-  needs:
-    - combine_build_images_prod
-    - prepare_environment
-    - test_all_services  # Wait for tests to pass before deploying
-    - merge_assembly_to_main
-  stage: deploy_production
-  image: alpine:3.18
-  resource_group: remote_production
-  interruptible: false  # Don't interrupt deployment once started
+    - when: never
   script:
+    - |
+      set -euo pipefail
+      export WORKDIR="$WORKDIR_DEMO"
 
-    # Set strict error handling
-    - set -euo pipefail
-    
-    # Step 1: Production Cleanup
-    - echo "=== PRODUCTION CLEANUP PHASE ==="
-    - echo "Cleaning up production server before deployment (preserving databases)"
-    - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
-    
-    - *cleanup_production_script
+      retry_compose_up() {
+        local tries=3
+        local n=1
+        until docker compose -f "$COMPOSE_FILE_DEMO" up -d --force-recreate --remove-orphans; do
+          if [ "$n" -ge "$tries" ]; then
+            echo "docker compose up failed after $tries attempts"
+            return 1
+          fi
+          echo "Deploy attempt $n failed, retrying..."
+          n=$((n+1))
+          sleep 10
+        done
+      }
 
-    # Step 2: Backup Postgres
-    - TARGET_USERNAME="$PRODUCTION_USERNAME"
-    - TARGET_HOST="$PRODUCTION_HOST"
-    - TARGET_BACKUP_ARCHIVE="$PRODUCTION_BACKUP_ARCHIVE"
-    - TARGET_REMOTE_PATH="$PRODUCTION_REMOTE_PATH"
-    - ENVIRONMENT="production"
-    - POSTGRES_CONTAINER="$POSTGRES_CONTAINER_PROD"
-    - *backup_postgres
+      validate_demo() {
+        echo "Validating message-service DB connectivity..."
+        docker compose -f "$COMPOSE_FILE_DEMO" exec -T message-service python - <<'PY'
+      import os, psycopg2
+      conn = psycopg2.connect(
+          host=os.getenv("SQL_DB_HOST"),
+          dbname=os.getenv("SQL_DB_NAME"),
+          user=os.getenv("SQL_DB_USER"),
+          password=os.getenv("SQL_DB_PASSWORD"),
+          port=os.getenv("SQL_DB_PORT"),
+      )
+      print("Demo DB connection OK")
+      conn.close()
+      PY
 
-    # Step 3: Copy files to production server
-    - echo "=== PRODUCTION SYNC PHASE ==="
-    - SSH_KEY_PATH="~/.ssh/production_remote_key"
-    - TAR_SUFFIX="-prod.tar"
-    - *copy_files
+        echo "Validating frontend..."
+        for i in $(seq 1 20); do
+          if curl -fsS http://127.0.0.1:8808 >/dev/null; then
+            echo "Frontend is reachable"
+            return 0
+          fi
+          echo "Waiting for frontend... ($i/20)"
+          sleep 3
+        done
 
-    # Step 4: Deploy to production
-    - echo "=== PRODUCTION DEPLOY PHASE ==="
-    - echo "Deploying to production server"
-    - *docker_install_check
-    - *load_images_prod
+        echo "Frontend did not become ready in time"
+        echo "Frontend logs:"
+        docker compose -f "$COMPOSE_FILE_DEMO" logs --tail=100 frontend || true
+        return 1
+      }
 
-    # Start the services using Docker Compose with retry logic
-    - COMPOSE_FILE=$COMPOSE_FILE_PROD
-    - *deploy_with_retry
-    #
-    # Verify the deployment
-    - echo "Verifying production deployment..."
-    - sleep 15
-    - $SSH_CMD $TARGET_USERNAME@$TARGET_HOST "cd $TARGET_REMOTE_PATH/infra && sudo docker compose -f $COMPOSE_FILE_PROD ps"
+      echo "Deploying demo branch $CI_COMMIT_BRANCH"
+      echo "Commit: $CI_COMMIT_SHA"
 
-    # Step 5: Validate production deployment
-    - VALIDATION_URL="$PRODUCTION_VALIDATION_URL"
-    - *validate_deployment
+      docker network inspect spara_demo_network >/dev/null 2>&1 || docker network create spara_demo_network
 
-  artifacts:
-    reports:
-      dotenv: deployment_info.env
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
+      echo "Docker usage before deploy:"
+      docker system df || true
 
-# Record Production Success
-#
-# Records successful production deployment and cleans up old backups.
-# Only runs after successful production deployment and validation.
-record_production_success:
-  stage: finish_production
-  image: alpine:3.18
-  resource_group: remote_production
-  interruptible: false  # Don't interrupt success recording once started
+      cd "$WORKDIR/infra"
+
+      echo "Deploying already built images..."
+      if ! retry_compose_up; then
+        echo "Deployment failed"
+        docker compose -f "$COMPOSE_FILE_DEMO" ps || true
+        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+        exit 1
+      fi
+
+      echo "Validating demo deployment..."
+      if ! validate_demo; then
+        echo "Validation failed"
+        docker compose -f "$COMPOSE_FILE_DEMO" ps || true
+        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+        exit 1
+      fi
+
+      docker compose -f "$COMPOSE_FILE_DEMO" ps
+      docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+      echo "Root disk usage before cleanup:"
+      df -h /
+
+      echo "Docker usage before cleanup:"
+      docker system df || true
+
+      echo "Cleaning Docker build cache only..."
+      docker builder prune -af --filter "until=168h" || true
+
+      echo "Root disk usage after cleanup:"
+      df -h /
+
+      echo "Docker usage after cleanup:"
+      docker system df || true
+
+run_demo_benchmark_report:
+  stage: benchmark_demo
+  tags:
+    - demo
+  resource_group: demo_deploy
   needs:
-    - deploy_and_validate_remote_production
-    - prepare_environment  # To get deployment info
-  script:
-    # Set strict error handling
-    - set -euo pipefail
-
-    # Setup SSH and variables
-    - export SSH_CMD="ssh -i ~/.ssh/production_remote_key -o StrictHostKeyChecking=no"
-    - TARGET_USERNAME="$PRODUCTION_USERNAME"
-    - TARGET_HOST="$PRODUCTION_HOST"
-    - TARGET_BACKUP_ARCHIVE="$PRODUCTION_BACKUP_ARCHIVE"
-    - TARGET_TAG_FILE="$PRODUCTION_TAG_FILE"
-    - ENVIRONMENT="production"
-    - CURRENT_ASSEMBLY_TAG="$ENVIRONMENT-$DEPLOYMENT_TAG"
-
-    # Record successful deployment tag
-    - *record_success
-
-    # Clean up old backups now that deployment is confirmed successful
-    - *cleanup_old_backups
-
+    - deploy_demo
   rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-
-# Automatic Production Rollback
-#
-# Production rollback job - automatically triggers on production deployment failure.
-# This job will attempt to restore the last successful deployment (1 step back)
-# by restoring the database and deploying the last successful code version.
-automatic_rollback:
-  stage: finish_production
-  image: docker:24.0-cli
-  resource_group: remote_production
-  services:
-    - docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-    ROLLBACK_TYPE: "automatic"
-  needs:
-    - deploy_and_validate_remote_production
+    - if: '$CI_COMMIT_BRANCH == "demo"'
+      when: on_success
+    - when: never
   script:
-    # Set strict error handling
-    - set -euo pipefail
-    - *rollback_production
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-      when: on_failure
+    - |
+      set -euo pipefail
+      export WORKDIR="$WORKDIR_DEMO"
 
-# Manual Production Rollback
-#
-# Production rollback job - can be manually triggered when needed.
-# This job will attempt to restore a deployment from 2 steps back
-# by restoring the database and deploying the previous successful code version.
-manual_rollback:
-  stage: finish_production
-  image: docker:24.0-cli
-  resource_group: remote_production
-  services:
-    - docker:dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-    DOCKER_DRIVER: overlay2
-    ROLLBACK_TYPE: "manual"
-  needs:
-    - deploy_and_validate_remote_production
-  script:
-    # Set strict error handling
-    - set -euo pipefail
-    - *rollback_production
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^test\//'
-      when: manual
+      echo "Running demo benchmark suite against deployed demo build"
+      echo "Commit: $CI_COMMIT_SHA"
+      echo "Pipeline: $CI_PIPELINE_ID"
 
+      cd "$WORKDIR/infra"
+      BENCHMARK_EMAIL_TO="${BENCHMARK_EMAIL_RECIPIENTS:-${BENCHMARK_EMAIL_RECIPIENT:-shadaab@kth.se}}"
 
+      docker compose -f "$COMPOSE_FILE_DEMO" run --rm --no-deps \
+        -v "$WORKDIR:/workspace" \
+        -e BENCHMARK_EMAIL_ENABLED=true \
+        -e BENCHMARK_EMAIL_RECIPIENTS="$BENCHMARK_EMAIL_TO" \
+        -e BENCHMARK_EMAIL_SMTP_SERVER="${BENCHMARK_EMAIL_SMTP_SERVER:-}" \
+        -e BENCHMARK_EMAIL_SMTP_PORT="${BENCHMARK_EMAIL_SMTP_PORT:-587}" \
+        -e BENCHMARK_EMAIL_ACCOUNT="${BENCHMARK_EMAIL_ACCOUNT:-}" \
+        -e BENCHMARK_EMAIL_ADDRESS="${BENCHMARK_EMAIL_ADDRESS:-}" \
+        -e BENCHMARK_EMAIL_PASSWORD="${BENCHMARK_EMAIL_PASSWORD:-}" \
+        --entrypoint bash \
+        llm-service \
+        -lc 'cd /workspace && PYTHONPATH=/workspace/llm-service python evaluation/scripts/run_benchmark_suite.py'
 
-
+      test -f "$WORKDIR/evaluation/results/benchmark_report.md"
+      echo "Benchmark report stored at $WORKDIR/evaluation/results/benchmark_report.md"
