@@ -58,6 +58,48 @@ def _first_present(row: Dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _parse_epc_version_date(value: Any) -> tuple[int, int, int] | None:
+    if not _present(value):
+        return None
+    if isinstance(value, int):
+        return (value, 0, 0) if 1900 <= value <= 2199 else None
+    if isinstance(value, float):
+        as_int = int(value)
+        return (as_int, 0, 0) if value.is_integer() and 1900 <= as_int <= 2199 else None
+
+    text = str(value).strip()
+    date_match = re.search(r"\b(19\d{2}|20\d{2}|21\d{2})[-/.]?(\d{2})[-/.]?(\d{2})\b", text)
+    if date_match:
+        year, month, day = (int(part) for part in date_match.groups())
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return (year, month, day)
+
+    year_match = re.search(r"\b(19\d{2}|20\d{2}|21\d{2})\b", text)
+    if year_match:
+        return (int(year_match.group(1)), 0, 0)
+
+    return None
+
+
+def _record_identity_key(row: Dict[str, Any]) -> str:
+    return str(
+        _first_present(row, "byggnadsid", "building_id", "50a_uuid", "01a_fnr")
+        or json.dumps(row, sort_keys=True, ensure_ascii=False)
+    )
+
+
+def _record_version_key(row: Dict[str, Any]) -> tuple[int, int, int] | None:
+    return _parse_epc_version_date(
+        _first_present(
+            row,
+            "epc_godkand",
+            "epc_egiversion",
+            "epc_egiversion_calc",
+            "energy_declaration_year",
+        )
+    )
+
+
 def _ascii_slug(value: str) -> str:
     folded = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     slug = re.sub(r"[^A-Za-z0-9]+", "_", folded).strip("_").upper()
@@ -149,8 +191,27 @@ def _extract_building_info(row: Dict[str, Any]) -> Dict[str, Any]:
             row,
             "energy_performance",
             "epc_egienergiprestanda",
+            "epc_egiprimarenergital2019",
             "epc_egiprimarenergital2020_calc",
+            "epc_egiprimarenergital2020",
+            "epc_egispecifikenergianvandning",
             "epc_egispecifikenergianvandning_calc",
+        ),
+        "specific_energy_use": _first_present(
+            row,
+            "specific_energy_use",
+            "epc_egispecifikenergianvandning",
+            "epc_egispecifikenergianvandning_calc",
+            "epc_egispecifikenergianvandning_eindex_calc",
+        ),
+        "primary_energy_number": _first_present(
+            row,
+            "primary_energy_number",
+            "primary_energy",
+            "epc_egiprimarenergital2020_calc",
+            "epc_egiprimarenergital2020",
+            "epc_egiprimarenergital2019",
+            "epc_egiprimarenergital",
         ),
         "heating_system": heating_system,
         "ventilation_type": _ventilation_type(row),
@@ -177,16 +238,44 @@ def _unique_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     seen = set()
     for row in records:
         key = (
-            row.get("byggnadsid")
-            or row.get("50a_uuid")
-            or row.get("01a_fnr")
-            or json.dumps(row, sort_keys=True, ensure_ascii=False)
+            _record_identity_key(row),
+            _first_present(
+                row,
+                "epc_formularid",
+                "epc_godkand",
+                "epc_egiversion",
+                "epc_version",
+            ),
+            _first_present(row, "epc_idadr", "address"),
         )
         if key in seen:
             continue
         unique.append(row)
         seen.add(key)
     return unique
+
+
+def _select_latest_epc_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    order: List[str] = []
+    for row in records or []:
+        key = _record_identity_key(row)
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(row)
+
+    selected: List[Dict[str, Any]] = []
+    for key in order:
+        rows = grouped[key]
+        keyed_rows = [(row, _record_version_key(row)) for row in rows]
+        available_keys = [version for _, version in keyed_rows if version is not None]
+        if not available_keys:
+            selected.extend(rows)
+            continue
+        latest = max(available_keys)
+        selected.extend(row for row, version in keyed_rows if version == latest)
+    return selected
 
 
 def fetch_address(address: str, *, base_url: str, timeout: float, retries: int) -> List[Dict[str, Any]]:
@@ -326,7 +415,9 @@ def _ambiguous_case(prefix: str, index: int, address: str, infos: List[Dict[str,
 def build_cases(addresses: List[str], *, base_url: str, timeout: float, retries: int, prefix: str) -> List[Dict[str, Any]]:
     cases: List[Dict[str, Any]] = []
     for address_index, address in enumerate(addresses, start=1):
-        records = _unique_records(fetch_address(address, base_url=base_url, timeout=timeout, retries=retries))
+        records = _select_latest_epc_records(
+            _unique_records(fetch_address(address, base_url=base_url, timeout=timeout, retries=retries))
+        )
         infos = [_extract_building_info(row) for row in records]
         infos = [info for info in infos if info]
         case_prefix = f"{prefix}_{address_index:02d}_{_ascii_slug(address)}"

@@ -22,6 +22,9 @@ CSV_HEADERS = [
     "must_include",
     "must_not_include",
     "answer_expectation_status",
+    "answer_automated_status",
+    "requires_advisor_review",
+    "review_criteria",
     "missing_required_terms",
     "forbidden_terms_present",
     "grounding_status",
@@ -87,6 +90,9 @@ def main() -> int:
         writer = csv.DictWriter(handle, fieldnames=CSV_HEADERS)
         writer.writeheader()
         for row in rows:
+            expectation = row.get("answer_expectation")
+            expectation = expectation if isinstance(expectation, dict) else {}
+            review_criteria = row.get("review_criteria") or expectation.get("review_criteria") or []
             writer.writerow(
                 {
                     "case_id": row.get("case_id"),
@@ -100,6 +106,17 @@ def main() -> int:
                     "must_include": json.dumps(row.get("must_include") or [], ensure_ascii=False),
                     "must_not_include": json.dumps(row.get("must_not_include") or [], ensure_ascii=False),
                     "answer_expectation_status": row.get("answer_expectation_status"),
+                    "answer_automated_status": (
+                        expectation.get("automated_status")
+                        or row.get("answer_expectation_status")
+                        or "not_checked"
+                    ),
+                    "requires_advisor_review": bool(
+                        row.get("requires_advisor_review")
+                        or expectation.get("requires_advisor_review")
+                        or review_criteria
+                    ),
+                    "review_criteria": json.dumps(review_criteria, ensure_ascii=False),
                     "missing_required_terms": json.dumps(row.get("missing_required_terms") or [], ensure_ascii=False),
                     "forbidden_terms_present": json.dumps(row.get("forbidden_terms_present") or [], ensure_ascii=False),
                     "grounding_status": row.get("grounding_status"),

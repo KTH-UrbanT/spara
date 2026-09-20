@@ -34,6 +34,20 @@ evaluation/data/evaluation_cases.jsonl
 
 ## Readiness Behavior Cases
 
+The advisory improvements are tracked in `ADVISORY_TASKS.md`; the source-based
+conversation design and ODEN mapping are in `ADVISORY_FRAMEWORK.md`.
+Cases `ADVISORY_01...` through `ADVISORY_07...` exercise diagnostic questions,
+constraint memory, conditional prioritization, ODEN grounding, report artifacts
+and handoff preview/cancellation. Their `review_criteria` require human review:
+keyword success is recorded separately and never establishes advisory quality.
+The advisor CSV includes those criteria. Old stored result files are historical
+baseline evidence and have not been regenerated for these changes.
+
+Use `--evaluation-mode` for offline-style handoff behavior when running the live
+model evaluation runner; it suppresses real handoff email and uses simulated
+results. The runner still calls the configured models/retrieval services.
+Do not use `--email-report` unless sending the benchmark report is intended.
+
 The normal evaluation now includes a focused readiness slice directly in
 `evaluation/data/evaluation_cases.jsonl`. These cases use IDs like
 `READINESS_A01...` through `READINESS_J02...` and mirror the behavior groups in
@@ -84,6 +98,38 @@ the expected route, expected-answer contract, and optional simple checks. The
 current demo set includes `MULTI_...` scenarios for generic advice, address
 clarification, building-specific follow-ups, ambiguous-address resolution, and
 expert handoff confirmation.
+
+## Advisory Regression Tests
+
+The advisory regression tests were extended on 2026-09-20. They cover real
+confirmation parsing, context retention, report failure/expiry behavior, preview
+changes, duplicate submission protection, public status fields, and semantic
+review criteria. Tests have not been executed for this revision.
+
+Run these commands separately in the indicated directories using your working
+Python environment with the project's test dependencies installed.
+
+From `spara_hans/llm-service`:
+
+```powershell
+python -m pytest tests/unit/test_router_confirmation.py tests/unit/test_generic_agent.py tests/unit/test_draft_report_service.py tests/unit/test_expert_handoff_email.py tests/unit/test_agent_router_expert_handoff.py tests/unit/test_safety_boundary.py -q
+```
+
+From `spara_hans/message-service`:
+
+```powershell
+python -m pytest tests/test_public_messages.py -q
+```
+
+From `spara_hans`:
+
+```powershell
+python -m pytest evaluation/tests/test_advisory_expectations.py evaluation/tests/test_advisory_metrics.py evaluation/tests/test_advisory_runner.py -q
+```
+
+The new tests use mocked services and scripted responses. They do not establish
+live ODEN/Azure/SMTP availability or advisor approval. The model-driven evaluation
+runner described below is separate and uses configured live services.
 
 ## ODEN Building-Specific Cases
 

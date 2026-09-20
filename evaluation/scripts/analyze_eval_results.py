@@ -97,6 +97,26 @@ def _safety_payload(row: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
+def _automated_answer_status(row: Dict[str, Any]) -> str:
+    """Keep pending semantic review separate from executable keyword checks."""
+    expectation = row.get("answer_expectation")
+    if isinstance(expectation, dict) and expectation.get("automated_status"):
+        return expectation["automated_status"]
+    # Historical runs predate the separate automated/advisor statuses.
+    return row.get("answer_expectation_status") or "not_checked"
+
+
+def _requires_advisor_review(row: Dict[str, Any]) -> bool:
+    expectation = row.get("answer_expectation")
+    expectation = expectation if isinstance(expectation, dict) else {}
+    return bool(
+        row.get("requires_advisor_review")
+        or row.get("review_criteria")
+        or expectation.get("requires_advisor_review")
+        or expectation.get("review_criteria")
+    )
+
+
 def _float_from_grounding(row: Dict[str, Any], key: str) -> float | None:
     raw = _grounding_payload(row).get(key)
     if raw in (None, ""):
@@ -252,12 +272,12 @@ def _build_summary_payload(results: List[Dict[str, Any]], reviews: List[Dict[str
     answer_checked_rows = [
         row
         for row in results
-        if row.get("answer_expectation_status") in {"passed", "needs_review"}
+        if _automated_answer_status(row) in {"passed", "needs_review"}
     ]
     answer_passed_rows = [
         row
         for row in answer_checked_rows
-        if row.get("answer_expectation_status") == "passed"
+        if _automated_answer_status(row) == "passed"
     ]
 
     field_expected = 0
@@ -365,7 +385,11 @@ def _build_summary_payload(results: List[Dict[str, Any]], reviews: List[Dict[str
         "out_of_scope_accuracy": _safe_div(len(out_of_scope_matches), len(out_of_scope_cases)),
         "answer_expectation_accuracy": _safe_div(len(answer_passed_rows), len(answer_checked_rows)),
         "answer_expectation_checked_count": len(answer_checked_rows),
-        "answer_expectation_review_count": len(answer_checked_rows) - len(answer_passed_rows),
+        "answer_expectation_review_count": sum(
+            row.get("answer_expectation_status") == "needs_review" for row in results
+        ),
+        "answer_automated_review_count": len(answer_checked_rows) - len(answer_passed_rows),
+        "advisor_review_required_count": sum(_requires_advisor_review(row) for row in results),
         "failure_rate": _safe_div(len(failed_results), len(results)),
         "failure_count": len(failed_results),
         "average_latency_seconds": _average(latencies),
@@ -439,6 +463,8 @@ def build_summary(results: List[Dict[str, Any]], reviews: List[Dict[str, Any]]) 
                 "out_of_scope_accuracy": variant_summary.get("out_of_scope_accuracy"),
                 "answer_expectation_accuracy": variant_summary.get("answer_expectation_accuracy"),
                 "answer_expectation_review_count": variant_summary.get("answer_expectation_review_count"),
+                "answer_automated_review_count": variant_summary.get("answer_automated_review_count"),
+                "advisor_review_required_count": variant_summary.get("advisor_review_required_count"),
                 "failure_rate": variant_summary.get("failure_rate"),
                 "grounding_review_rate": variant_summary.get("grounding_review_rate"),
                 "average_unsupported_claim_rate": variant_summary.get("average_unsupported_claim_rate"),
