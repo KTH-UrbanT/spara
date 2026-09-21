@@ -72,13 +72,15 @@ def _answer_expectation_summary(row: Dict[str, Any]) -> str:
     missing = row.get("missing_required_terms") or []
     forbidden = row.get("forbidden_terms_present") or []
     if status == "passed":
-        return "passed"
+        return "keyword checks passed"
     if status == "needs_review":
         parts = []
         if missing:
             parts.append("missing: " + _list_text(missing))
         if forbidden:
             parts.append("forbidden: " + _list_text(forbidden))
+        if row.get("requires_advisor_review"):
+            parts.append("advisor review required: " + _list_text(row.get("review_criteria"), limit=240))
         return "; ".join(parts) or "needs review"
     return "not checked"
 
@@ -250,8 +252,9 @@ def build_report(results: List[Dict[str, Any]], summary: Dict[str, Any]) -> str:
                 ["Field accuracy", _fmt_metric(summary.get("field_accuracy"), percent=True)],
                 ["Clarification accuracy", _fmt_metric(summary.get("clarification_accuracy"), percent=True)],
                 ["Out-of-scope accuracy", _fmt_metric(summary.get("out_of_scope_accuracy"), percent=True)],
-                ["Answer criteria pass rate", _fmt_metric(summary.get("answer_expectation_accuracy"), percent=True)],
-                ["Answer criteria review count", summary.get("answer_expectation_review_count")],
+                ["Keyword check pass rate", _fmt_metric(summary.get("answer_expectation_accuracy"), percent=True)],
+                ["Keyword check failures", summary.get("answer_automated_review_count")],
+                ["Turns requiring advisor review", summary.get("advisor_review_required_count")],
                 ["Failure rate", _fmt_metric(summary.get("failure_rate"), percent=True)],
                 ["Median latency", _fmt_metric(summary.get("median_latency_seconds"), seconds=True)],
                 ["P95 latency", _fmt_metric(summary.get("p95_latency_seconds"), seconds=True)],
@@ -308,7 +311,7 @@ def build_report(results: List[Dict[str, Any]], summary: Dict[str, Any]) -> str:
                     "Field acc.",
                     "Clarification acc.",
                     "OOS acc.",
-                    "Answer criteria",
+                    "Keyword checks",
                     "Answer reviews",
                     "Failure rate",
                     "Grounding review",

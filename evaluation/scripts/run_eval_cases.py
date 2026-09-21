@@ -69,6 +69,7 @@ def _answer_expectation(
     *,
     must_include: List[str],
     must_not_include: List[str],
+    review_criteria: List[str] | None = None,
 ) -> Dict[str, Any]:
     answer_folded = str(answer_text or "").lower()
     missing_required_terms = [
@@ -86,7 +87,10 @@ def _answer_expectation(
         status = "passed"
 
     return {
-        "status": status,
+        "status": "needs_review" if review_criteria else status,
+        "automated_status": status,
+        "requires_advisor_review": bool(review_criteria),
+        "review_criteria": review_criteria or [],
         "missing_required_terms": missing_required_terms,
         "forbidden_terms_present": forbidden_terms_present,
     }
@@ -186,6 +190,7 @@ def _run_case(
         expected_building_info = _turn_value(case, turn, "expected_building_info", {})
         must_include = _coerce_list(_turn_value(case, turn, "must_include", []))
         must_not_include = _coerce_list(_turn_value(case, turn, "must_not_include", []))
+        review_criteria = _coerce_list(_turn_value(case, turn, "review_criteria", []))
         user_payload = {"role": "user", "content": user_message}
         messages.append(user_payload)
         turn_started = time.perf_counter()
@@ -217,6 +222,7 @@ def _run_case(
                 assistant_payload.get("content"),
                 must_include=must_include,
                 must_not_include=must_not_include,
+                review_criteria=review_criteria,
             )
             messages.append(assistant_payload)
             case_results.append(
@@ -234,6 +240,8 @@ def _run_case(
                     "expected_building_info": expected_building_info if isinstance(expected_building_info, dict) else {},
                     "must_include": must_include,
                     "must_not_include": must_not_include,
+                    "review_criteria": review_criteria,
+                    "requires_advisor_review": bool(review_criteria),
                     "answer_expectation": answer_expectation,
                     "answer_expectation_status": answer_expectation.get("status"),
                     "missing_required_terms": answer_expectation.get("missing_required_terms") or [],
@@ -247,6 +255,8 @@ def _run_case(
                     "actual_agent": assistant_metadata.get("agent"),
                     "classification": assistant_payload.get("classification"),
                     "assistant_content": assistant_payload.get("content"),
+                    "report_status": assistant_payload.get("report_status"),
+                    "downloadable_report": assistant_payload.get("downloadable_report"),
                     "retrieved_building_id": assistant_metadata.get("building_id"),
                     "retrieved_facts": assistant_metadata.get("retrieved_facts") or {},
                     "grounding": grounding,
@@ -285,6 +295,8 @@ def _run_case(
                     "must_include": must_include,
                     "must_not_include": must_not_include,
                     "answer_expectation_status": "not_checked",
+                    "review_criteria": review_criteria,
+                    "requires_advisor_review": bool(review_criteria),
                     "missing_required_terms": [],
                     "forbidden_terms_present": [],
                     "actual_route": None,

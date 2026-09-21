@@ -1,0 +1,310 @@
+{
+  "total_turns": 164,
+  "total_cases_with_expected_route": 149,
+  "route_accuracy": 0.8658,
+  "route_macro_f1": 0.708,
+  "route_class_metrics": {
+    "building_specific": {
+      "precision": 0.98,
+      "recall": 0.8448,
+      "f1": 0.9074,
+      "support": 58
+    },
+    "clarification": {
+      "precision": 0.5769,
+      "recall": 1.0,
+      "f1": 0.7317,
+      "support": 15
+    },
+    "combined": {
+      "precision": 0.875,
+      "recall": 0.8235,
+      "f1": 0.8485,
+      "support": 17
+    },
+    "expert_handoff": {
+      "precision": 0.8333,
+      "recall": 1.0,
+      "f1": 0.9091,
+      "support": 5
+    },
+    "generic": {
+      "precision": 0.9333,
+      "recall": 0.9545,
+      "f1": 0.9438,
+      "support": 44
+    },
+    "out_of_scope": {
+      "precision": 1.0,
+      "recall": 0.4444,
+      "f1": 0.6153,
+      "support": 9
+    },
+    "report_generation": {
+      "precision": null,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 1
+    }
+  },
+  "route_confusion_matrix": {
+    "generic": {
+      "generic": 42,
+      "clarification": 2
+    },
+    "building_specific": {
+      "clarification": 7,
+      "building_specific": 49,
+      "combined": 2
+    },
+    "combined": {
+      "clarification": 2,
+      "combined": 14,
+      "building_specific": 1
+    },
+    "clarification": {
+      "clarification": 15
+    },
+    "expert_handoff": {
+      "expert_handoff": 5
+    },
+    "report_generation": {
+      "error": 1
+    },
+    "out_of_scope": {
+      "out_of_scope": 4,
+      "generic": 3,
+      "expert_handoff": 1,
+      "error": 1
+    }
+  },
+  "turns_by_case_type": {
+    "general_energy_advice": 8,
+    "energy_declaration_explanation": 1,
+    "building_specific_factual": 34,
+    "combined": 1,
+    "clarification": 2,
+    "expert_handoff": 2,
+    "report_generation": 1,
+    "out_of_scope": 2,
+    "multi_turn_clarification": 2,
+    "multi_turn_generic_to_building_specific": 8,
+    "multi_turn_building_specific_followup": 2,
+    "multi_turn_ambiguous_address_resolution": 3,
+    "multi_turn_expert_handoff": 2,
+    "ekr_general_question_bank": 30,
+    "ambiguous_building_address": 2,
+    "combined_building_specific_advice": 10,
+    "readiness_behavior_clarification": 3,
+    "readiness_behavior_building_identification": 7,
+    "readiness_behavior_boundary": 1,
+    "readiness_behavior_database_lookup": 5,
+    "readiness_behavior_combined_advice": 6,
+    "readiness_behavior_routing": 6,
+    "readiness_behavior_dialogue_memory": 9,
+    "readiness_behavior_missing_data_contradiction": 4,
+    "readiness_behavior_out_of_scope": 5,
+    "readiness_behavior_hallucination_trap": 3,
+    "readiness_behavior_efficiency_stress": 2,
+    "readiness_behavior_transparency_handover": 3
+  },
+  "building_identification_accuracy": 0.8983,
+  "field_accuracy": 0.9239,
+  "clarification_accuracy": 1.0,
+  "out_of_scope_accuracy": 0.4444,
+  "answer_expectation_accuracy": 0.8571,
+  "answer_expectation_checked_count": 161,
+  "answer_expectation_review_count": 23,
+  "failure_rate": 0.0183,
+  "failure_count": 3,
+  "average_latency_seconds": 19.2589,
+  "median_latency_seconds": 8.5206,
+  "p95_latency_seconds": 53.9723,
+  "grounding_evaluated_turns": 0,
+  "grounding_claim_turns": 0,
+  "grounding_review_rate": null,
+  "unsupported_claim_count": 0,
+  "average_support_ratio": null,
+  "average_unsupported_claim_rate": null,
+  "average_citation_coverage": null,
+  "safety_evaluated_turns": 10,
+  "safety_detected_risk_turns": 4,
+  "safety_review_rate": 0.0,
+  "boundary_handled_safely_rate": 1.0,
+  "advisor_review_count": 0,
+  "advisor_average_usefulness": null,
+  "advisor_average_personalization": null,
+  "advisor_average_confidence": null,
+  "unsafe_or_misleading_count": 0,
+  "needs_major_edit_count": 0,
+  "advisor_error_tag_counts": {},
+  "advisor_correction_review_count": 0,
+  "advisor_correction_action_counts": {},
+  "by_variant": {
+    "full": {
+      "total_turns": 164,
+      "total_cases_with_expected_route": 149,
+      "route_accuracy": 0.8658,
+      "route_macro_f1": 0.708,
+      "route_class_metrics": {
+        "building_specific": {
+          "precision": 0.98,
+          "recall": 0.8448,
+          "f1": 0.9074,
+          "support": 58
+        },
+        "clarification": {
+          "precision": 0.5769,
+          "recall": 1.0,
+          "f1": 0.7317,
+          "support": 15
+        },
+        "combined": {
+          "precision": 0.875,
+          "recall": 0.8235,
+          "f1": 0.8485,
+          "support": 17
+        },
+        "expert_handoff": {
+          "precision": 0.8333,
+          "recall": 1.0,
+          "f1": 0.9091,
+          "support": 5
+        },
+        "generic": {
+          "precision": 0.9333,
+          "recall": 0.9545,
+          "f1": 0.9438,
+          "support": 44
+        },
+        "out_of_scope": {
+          "precision": 1.0,
+          "recall": 0.4444,
+          "f1": 0.6153,
+          "support": 9
+        },
+        "report_generation": {
+          "precision": null,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 1
+        }
+      },
+      "route_confusion_matrix": {
+        "generic": {
+          "generic": 42,
+          "clarification": 2
+        },
+        "building_specific": {
+          "clarification": 7,
+          "building_specific": 49,
+          "combined": 2
+        },
+        "combined": {
+          "clarification": 2,
+          "combined": 14,
+          "building_specific": 1
+        },
+        "clarification": {
+          "clarification": 15
+        },
+        "expert_handoff": {
+          "expert_handoff": 5
+        },
+        "report_generation": {
+          "error": 1
+        },
+        "out_of_scope": {
+          "out_of_scope": 4,
+          "generic": 3,
+          "expert_handoff": 1,
+          "error": 1
+        }
+      },
+      "turns_by_case_type": {
+        "general_energy_advice": 8,
+        "energy_declaration_explanation": 1,
+        "building_specific_factual": 34,
+        "combined": 1,
+        "clarification": 2,
+        "expert_handoff": 2,
+        "report_generation": 1,
+        "out_of_scope": 2,
+        "multi_turn_clarification": 2,
+        "multi_turn_generic_to_building_specific": 8,
+        "multi_turn_building_specific_followup": 2,
+        "multi_turn_ambiguous_address_resolution": 3,
+        "multi_turn_expert_handoff": 2,
+        "ekr_general_question_bank": 30,
+        "ambiguous_building_address": 2,
+        "combined_building_specific_advice": 10,
+        "readiness_behavior_clarification": 3,
+        "readiness_behavior_building_identification": 7,
+        "readiness_behavior_boundary": 1,
+        "readiness_behavior_database_lookup": 5,
+        "readiness_behavior_combined_advice": 6,
+        "readiness_behavior_routing": 6,
+        "readiness_behavior_dialogue_memory": 9,
+        "readiness_behavior_missing_data_contradiction": 4,
+        "readiness_behavior_out_of_scope": 5,
+        "readiness_behavior_hallucination_trap": 3,
+        "readiness_behavior_efficiency_stress": 2,
+        "readiness_behavior_transparency_handover": 3
+      },
+      "building_identification_accuracy": 0.8983,
+      "field_accuracy": 0.9239,
+      "clarification_accuracy": 1.0,
+      "out_of_scope_accuracy": 0.4444,
+      "answer_expectation_accuracy": 0.8571,
+      "answer_expectation_checked_count": 161,
+      "answer_expectation_review_count": 23,
+      "failure_rate": 0.0183,
+      "failure_count": 3,
+      "average_latency_seconds": 19.2589,
+      "median_latency_seconds": 8.5206,
+      "p95_latency_seconds": 53.9723,
+      "grounding_evaluated_turns": 0,
+      "grounding_claim_turns": 0,
+      "grounding_review_rate": null,
+      "unsupported_claim_count": 0,
+      "average_support_ratio": null,
+      "average_unsupported_claim_rate": null,
+      "average_citation_coverage": null,
+      "safety_evaluated_turns": 10,
+      "safety_detected_risk_turns": 4,
+      "safety_review_rate": 0.0,
+      "boundary_handled_safely_rate": 1.0,
+      "advisor_review_count": 0,
+      "advisor_average_usefulness": null,
+      "advisor_average_personalization": null,
+      "advisor_average_confidence": null,
+      "unsafe_or_misleading_count": 0,
+      "needs_major_edit_count": 0,
+      "advisor_error_tag_counts": {},
+      "advisor_correction_review_count": 0,
+      "advisor_correction_action_counts": {}
+    }
+  },
+  "variant_comparison": [
+    {
+      "system_variant": "full",
+      "total_turns": 164,
+      "route_accuracy": 0.8658,
+      "route_macro_f1": 0.708,
+      "building_identification_accuracy": 0.8983,
+      "field_accuracy": 0.9239,
+      "clarification_accuracy": 1.0,
+      "out_of_scope_accuracy": 0.4444,
+      "answer_expectation_accuracy": 0.8571,
+      "answer_expectation_review_count": 23,
+      "failure_rate": 0.0183,
+      "grounding_review_rate": null,
+      "average_unsupported_claim_rate": null,
+      "average_citation_coverage": null,
+      "safety_review_rate": 0.0,
+      "boundary_handled_safely_rate": 1.0,
+      "median_latency_seconds": 8.5206,
+      "p95_latency_seconds": 53.9723
+    }
+  ]
+}
