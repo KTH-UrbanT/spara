@@ -18,12 +18,26 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: message_store
+      POSTGRES_USER: &dev_db_user postgres
+      POSTGRES_PASSWORD: &dev_db_password postgres
+      POSTGRES_DB: &dev_db_name message_store
     volumes:
       - message_store_data:/var/lib/postgresql/data
       - ../shared/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$$POSTGRES_PASSWORD" psql
+          --host=message_store
+          --username="$$POSTGRES_USER"
+          --dbname="$$POSTGRES_DB"
+          --no-password
+          --command="SELECT 1" >/dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   ############################
   #  3) Message Service      #
@@ -34,12 +48,21 @@ services:
       dockerfile: Dockerfile
     container_name: spara-message-service-dev
     depends_on:
-      - redis
-      - message_store
+      redis:
+        condition: service_started
+      message_store:
+        condition: service_healthy
     ports:
       - "8000:8000"
     env_file:
       - ../message-service/.env
+    # Local dev always connects to its bundled database, regardless of .env.
+    environment:
+      SQL_DB_HOST: message_store
+      SQL_DB_PORT: "5432"
+      SQL_DB_NAME: *dev_db_name
+      SQL_DB_USER: *dev_db_user
+      SQL_DB_PASSWORD: *dev_db_password
 
   ############################
   #  4) LLM Service          #

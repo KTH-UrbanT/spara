@@ -167,6 +167,10 @@ def _ventilation_type(row: Dict[str, Any]) -> str | None:
 
 
 def _extract_building_info(row: Dict[str, Any]) -> Dict[str, Any]:
+    class_keys = ("epc_egienergiklass", "energy_class", "epc_egienergiklass2020_calc", "epc_egienergiklass2016_calc")
+    performance_keys = ("epc_egienergiprestanda", "energy_performance")
+    class_source = next((key for key in class_keys if _present(row.get(key))), None)
+    performance_source = next((key for key in performance_keys if _present(row.get(key))), None)
     heating_system = _normalize_heating_system(
         _first_present(
             row,
@@ -180,23 +184,15 @@ def _extract_building_info(row: Dict[str, Any]) -> Dict[str, Any]:
         "city": _first_present(row, "epc_idpostort", "epc_idkommun"),
         "building_id": _first_present(row, "byggnadsid", "building_id"),
         "50a_uuid": _first_present(row, "50a_uuid"),
-        "energy_class": _first_present(
-            row,
-            "energy_class",
-            "epc_egienergiklass2020_calc",
-            "epc_egienergiklass2016_calc",
-            "epc_egienergiklass",
-        ),
-        "energy_performance": _first_present(
-            row,
-            "energy_performance",
-            "epc_egienergiprestanda",
-            "epc_egiprimarenergital2019",
-            "epc_egiprimarenergital2020_calc",
-            "epc_egiprimarenergital2020",
-            "epc_egispecifikenergianvandning",
-            "epc_egispecifikenergianvandning_calc",
-        ),
+        "energy_class": row.get(class_source) if class_source else None,
+        "energy_class_basis": "calculated" if class_source and class_source.endswith("_calc") else "declared" if class_source else None,
+        "energy_class_source_field": class_source,
+        "declared_energy_class": _first_present(row, "epc_egienergiklass", "energy_class"),
+        "calculated_energy_class_2020": row.get("epc_egienergiklass2020_calc"),
+        "calculated_energy_class_2016": row.get("epc_egienergiklass2016_calc"),
+        # These are different metrics. Missing declared performance stays missing.
+        "energy_performance": row.get(performance_source) if performance_source else None,
+        "energy_performance_source_field": performance_source,
         "specific_energy_use": _first_present(
             row,
             "specific_energy_use",
@@ -218,7 +214,22 @@ def _extract_building_info(row: Dict[str, Any]) -> Dict[str, Any]:
         "atemp": _first_present(row, "epc_egenatemp"),
         "building_type": _first_present(row, "epc_egenbyggnadskat", "epc_egentypkod_typ"),
         "construction_year": _first_present(row, "epc_egennybyggar"),
+        "source_record": {
+            key: value for key, value in {
+                "building_id": _first_present(row, "byggnadsid", "building_id"),
+                "uuid": row.get("50a_uuid"),
+                "epc_record_id": _first_present(row, "epc_formularid", "epc_id"),
+                "approved_at": row.get("epc_godkand"),
+                "version": _first_present(row, "epc_egiversion", "epc_egiversion_calc", "energy_declaration_year"),
+            }.items() if _present(value)
+        },
+        "record_selection_basis": next((key for key in (
+            "epc_godkand", "epc_egiversion", "epc_egiversion_calc", "energy_declaration_year"
+        ) if _present(row.get(key))), "undated_record"),
     }
+    if not any(_present(value) for key, value in info.items()
+               if key not in {"source_record", "record_selection_basis"}):
+        return {}
     return {key: value for key, value in info.items() if _present(value)}
 
 
@@ -339,7 +350,7 @@ def _performance_case(prefix: str, index: int, address: str, info: Dict[str, Any
     must_include = []
     if energy_class:
         must_include.append(str(energy_class))
-    if energy_performance:
+    if _present(energy_performance):
         must_include.append(str(energy_performance))
     return {
         "case_id": f"{prefix}_{index:03d}_PERFORMANCE",
@@ -419,7 +430,8 @@ def build_cases(addresses: List[str], *, base_url: str, timeout: float, retries:
             _unique_records(fetch_address(address, base_url=base_url, timeout=timeout, retries=retries))
         )
         infos = [_extract_building_info(row) for row in records]
-        infos = [info for info in infos if info]
+        infos = [{**info, "source_endpoint": base_url, "source_query_address": address}
+                 for info in infos if info]
         case_prefix = f"{prefix}_{address_index:02d}_{_ascii_slug(address)}"
         if not infos:
             cases.append(

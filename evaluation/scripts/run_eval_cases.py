@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -13,6 +14,10 @@ LLM_SERVICE_ROOT = REPO_ROOT / "llm-service"
 SCRIPTS_ROOT = Path(__file__).resolve().parent
 DEFAULT_CASES_PATH = REPO_ROOT / "evaluation" / "data" / "evaluation_cases.jsonl"
 DEFAULT_OUTPUT_PATH = REPO_ROOT / "evaluation" / "results" / "eval_results.jsonl"
+RELEASE_EXCLUDED_CASE_IDS = (
+    "READINESS_I02_BATCH_COMPARE_LIMIT",
+    "READINESS_C06_COMPARE_SIMILAR_BUILDINGS",
+)
 
 if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
@@ -72,11 +77,18 @@ def _answer_expectation(
     review_criteria: List[str] | None = None,
 ) -> Dict[str, Any]:
     answer_folded = str(answer_text or "").lower()
+    def contains(term: str) -> bool:
+        folded = term.lower()
+        # A class label is a complete token; F in "performance" is no evidence
+        # that the answer stated class F. This remains a keyword check only.
+        if re.fullmatch(r"(?:[a-g]|a0)", folded):
+            return bool(re.search(r"(?<!\w)" + re.escape(folded) + r"(?!\w)", answer_folded))
+        return folded in answer_folded
     missing_required_terms = [
-        term for term in must_include if term.lower() not in answer_folded
+        term for term in must_include if not contains(term)
     ]
     forbidden_terms_present = [
-        term for term in must_not_include if term.lower() in answer_folded
+        term for term in must_not_include if contains(term)
     ]
 
     if not must_include and not must_not_include:
@@ -141,9 +153,13 @@ def _filter_cases(
     case_id: str | None,
     route: str | None,
     limit: int | None,
+    exclude_case_ids: Iterable[str] = (),
 ) -> List[Dict[str, Any]]:
     filtered = []
+    excluded = set(exclude_case_ids)
     for case in cases:
+        if case.get("case_id") in excluded:
+            continue
         if case_id and case.get("case_id") != case_id:
             continue
         if route and case.get("expected_route") != route:
@@ -297,6 +313,10 @@ def _run_case(
                     "answer_expectation_status": "not_checked",
                     "review_criteria": review_criteria,
                     "requires_advisor_review": bool(review_criteria),
+                    "expected_building_id": _turn_value(case, turn, "expected_building_id"),
+                    "expected_fields": _turn_value(case, turn, "expected_fields", []) or [],
+                    "retrieved_building_id": None,
+                    "retrieved_facts": {},
                     "missing_required_terms": [],
                     "forbidden_terms_present": [],
                     "actual_route": None,
@@ -320,6 +340,10 @@ def main() -> int:
     parser.add_argument("--case-id")
     parser.add_argument("--route")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--release-scope", action="store_true",
+                        help="Explicitly exclude the two clustering cases outside the deployed release; preserve them in the scope manifest.")
+    parser.add_argument("--exclude-case-id", action="append", default=[],
+                        help="Explicit additional case exclusion. Repeat for multiple IDs; exclusions are recorded alongside results.")
     parser.add_argument("--evaluation-mode", action="store_true")
     parser.add_argument(
         "--variant",
@@ -352,6 +376,19 @@ def main() -> int:
     if args.evaluation_mode:
         os.environ["EVALUATION_MODE"] = "true"
 
+    all_cases = _load_jsonl(args.input)
+    excluded_ids = set(args.exclude_case_id)
+    if args.release_scope:
+        excluded_ids.update(RELEASE_EXCLUDED_CASE_IDS)
+    unknown_exclusions = set(args.exclude_case_id) - {case.get("case_id") for case in all_cases}
+    if unknown_exclusions:
+        parser.error("Excluded case IDs were not found in the input: " + ", ".join(sorted(unknown_exclusions)))
+    if args.limit is not None and args.limit <= 0:
+        parser.error("--limit must be positive")
+    cases = _filter_cases(all_cases, case_id=args.case_id, route=args.route,
+                          limit=args.limit, exclude_case_ids=excluded_ids)
+    if not cases:
+        parser.error("No evaluation cases remain after the requested filters/exclusions")
     (
         AgentRouter,
         build_message_metadata,
@@ -359,14 +396,23 @@ def main() -> int:
         telemetry_context,
         telemetry_snapshot,
     ) = _import_runtime()
-    cases = _filter_cases(
-        _load_jsonl(args.input),
-        case_id=args.case_id,
-        route=args.route,
-        limit=args.limit,
-    )
-
     run_id = f"eval-run-{uuid.uuid4().hex[:12]}"
+    scope_path = args.output.with_suffix(".scope.json")
+    scope = {
+        "run_id": run_id, "input": str(args.input.resolve()),
+        "release_scope": args.release_scope, "system_variants": variants,
+        "input_cases": len(all_cases),
+        "input_turns": sum(len(_build_turns(case)) for case in all_cases),
+        "included_case_ids": [case["case_id"] for case in cases],
+        "included_cases": len(cases),
+        "expected_result_turns": sum(len(_build_turns(case)) for case in cases) * len(variants),
+        "excluded_cases": [{"case_id": case["case_id"], "turn_count": len(_build_turns(case)),
+                            "reason": "clustering outside deployed release" if args.release_scope and case["case_id"] in RELEASE_EXCLUDED_CASE_IDS else "explicit --exclude-case-id"}
+                           for case in all_cases if case.get("case_id") in excluded_ids],
+        "filters": {"case_id": args.case_id, "route": args.route, "limit": args.limit},
+    }
+    scope_path.parent.mkdir(parents=True, exist_ok=True)
+    scope_path.write_text(json.dumps(scope, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     results: List[Dict[str, Any]] = []
     for variant in variants:
         with variant_runtime_context(variant):
@@ -387,6 +433,7 @@ def main() -> int:
 
     _write_jsonl(args.output, results)
     print(f"Wrote {len(results)} turn results across {len(variants)} variant(s) to {args.output}")
+    print(f"Scope: {len(cases)} included cases; {len(scope['excluded_cases'])} explicitly excluded cases. {scope_path}")
     return 0
 
 

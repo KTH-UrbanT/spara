@@ -14,7 +14,7 @@ DEFAULT_OUTPUT_PATH = REPO_ROOT / "evaluation" / "results" / "metric_summary.jso
 
 def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
     if not path.exists():
-        return []
+        raise FileNotFoundError(f"Evaluation results not found: {path}")
     rows = []
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -26,7 +26,7 @@ def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
 
 def _load_csv(path: Path) -> List[Dict[str, Any]]:
     if not path.exists():
-        return []
+        raise FileNotFoundError(f"Advisor review file not found: {path}")
     with path.open("r", encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle))
 
@@ -65,9 +65,13 @@ def _percentile(values: Iterable[float], percentile: float) -> float | None:
 
 def _score_from_review(review: Dict[str, Any], key: str) -> float | None:
     raw = review.get(key)
-    if raw in (None, ""):
+    if raw in (None, "") or isinstance(raw, bool):
         return None
-    return float(raw)
+    try:
+        score = float(raw)
+    except (ValueError, TypeError):
+        return None
+    return score if math.isfinite(score) and 1 <= score <= 5 else None
 
 
 def _float_from_result(row: Dict[str, Any], key: str) -> float | None:
@@ -115,6 +119,74 @@ def _requires_advisor_review(row: Dict[str, Any]) -> bool:
         or expectation.get("requires_advisor_review")
         or expectation.get("review_criteria")
     )
+
+
+def _review_key(row: Dict[str, Any]) -> tuple[str, str, int] | None:
+    if not row.get("case_id"):
+        return None
+    turn = row.get("turn_index", 0)
+    if isinstance(turn, bool) or isinstance(turn, float) and not turn.is_integer():
+        return None
+    try:
+        turn = int(turn)
+    except (TypeError, ValueError):
+        return None
+    return str(row["case_id"]), str(row.get("system_variant") or "full"), turn
+
+
+def _review_started(review: Dict[str, Any]) -> bool:
+    fields = ("route_correct", "building_data_correct", "recommendation_correct", "useful",
+              "needs_minor_edit", "needs_major_edit", "unsafe_or_misleading", "comments",
+              "technical_correctness_score", "usefulness_score", "clarity_score", "advisor_confidence",
+              "personalization_score", "correction_summary", "corrected_answer")
+    return any(review.get(field) not in (None, "") for field in fields)
+
+
+def _review_complete(review: Dict[str, Any]) -> bool:
+    # The documented core rubric asks for correctness, usefulness, clarity and
+    # an as-is/minor/major/no disposition. A blank export or partial grade cannot
+    # satisfy a mandatory turn review. Completion does not mean approval.
+    scores = all(_score_from_review(review, field) is not None for field in (
+        "technical_correctness_score", "usefulness_score", "clarity_score"))
+    disposition = any(str(review.get(field, "")).strip().lower() in {"true", "false", "yes", "no"}
+                      for field in ("useful", "needs_minor_edit", "needs_major_edit"))
+    return scores and disposition
+
+
+def _match_reviews(results: List[Dict[str, Any]], reviews: List[Dict[str, Any]]):
+    matched, assessed, completed = [], set(), set()
+    counts = {"advisor_review_blank_count": 0, "advisor_review_unmatched_count": 0,
+              "advisor_review_unverified_legacy_count": 0}
+    for review in reviews:
+        key = _review_key(review)
+        candidates = [(index, row) for index, row in enumerate(results)
+                      if key is not None and _review_key(row) == key]
+        verified_provenance = bool(review.get("run_id") or review.get("message_id"))
+        if review.get("run_id"):
+            candidates = [(index, row) for index, row in candidates if row.get("run_id") == review["run_id"]]
+        elif review.get("message_id"):
+            candidates = [(index, row) for index, row in candidates if row.get("message_id") == review["message_id"]]
+        elif review.get("assistant_content") not in (None, ""):
+            candidates = [(index, row) for index, row in candidates if row.get("assistant_content") == review["assistant_content"]]
+            if any(row.get("run_id") for _, row in candidates):
+                counts["advisor_review_unverified_legacy_count"] += 1
+        elif any(row.get("run_id") for _, row in candidates):
+            counts["advisor_review_unverified_legacy_count"] += 1
+            candidates = []
+        if review.get("assistant_content") not in (None, ""):
+            candidates = [(index, row) for index, row in candidates if row.get("assistant_content") == review["assistant_content"]]
+        if len(candidates) != 1:
+            counts["advisor_review_unmatched_count"] += 1
+            continue
+        if not _review_started(review):
+            counts["advisor_review_blank_count"] += 1
+            continue
+        index, result = candidates[0]
+        matched.append(review)
+        assessed.add(index)
+        if _review_complete(review) and (verified_provenance or not result.get("run_id")):
+            completed.add(index)
+    return matched, assessed, completed, counts
 
 
 def _float_from_grounding(row: Dict[str, Any], key: str) -> float | None:
@@ -246,6 +318,9 @@ def _build_route_class_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _build_summary_payload(results: List[Dict[str, Any]], reviews: List[Dict[str, Any]]) -> Dict[str, Any]:
+    input_review_count = len(reviews)
+    reviews, assessed_reviews, completed_reviews, review_counts = _match_reviews(results, reviews)
+    required_reviews = {index for index, row in enumerate(results) if _requires_advisor_review(row)}
     routed = [row for row in results if row.get("expected_route")]
     route_matches = [row for row in routed if row.get("expected_route") == row.get("actual_route")]
 
@@ -315,7 +390,7 @@ def _build_summary_payload(results: List[Dict[str, Any]], reviews: List[Dict[str
     grounding_rows = [
         row
         for row in results
-        if _grounding_payload(row).get("status") not in (None, "", "not_applicable")
+        if _grounding_payload(row).get("status") not in (None, "", "not_applicable", "not_assessed", "unassessed", "not_checked")
     ]
     grounded_claim_rows = [
         row
@@ -374,28 +449,44 @@ def _build_summary_payload(results: List[Dict[str, Any]], reviews: List[Dict[str
     return {
         "total_turns": len(results),
         "total_cases_with_expected_route": len(routed),
+        "route_checked_count": len(routed),
+        "route_match_count": len(route_matches),
+        "route_unchecked_count": len(results) - len(routed),
         "route_accuracy": _safe_div(len(route_matches), len(routed)),
         "route_macro_f1": route_metrics["route_macro_f1"],
         "route_class_metrics": route_metrics["route_class_metrics"],
         "route_confusion_matrix": _build_confusion_matrix(results),
         "turns_by_case_type": _count_by_key(results, "case_type"),
         "building_identification_accuracy": _safe_div(len(building_matches), len(building_cases)),
+        "building_identification_checked_count": len(building_cases),
+        "building_identification_match_count": len(building_matches),
+        "building_identification_unchecked_count": len(results) - len(building_cases),
         "field_accuracy": _safe_div(field_found, field_expected),
+        "field_expected_count": field_expected,
+        "field_found_count": field_found,
         "clarification_accuracy": _safe_div(len(clarification_matches), len(clarification_cases)),
         "out_of_scope_accuracy": _safe_div(len(out_of_scope_matches), len(out_of_scope_cases)),
         "answer_expectation_accuracy": _safe_div(len(answer_passed_rows), len(answer_checked_rows)),
         "answer_expectation_checked_count": len(answer_checked_rows),
+        "answer_expectation_unchecked_count": len(results) - len(answer_checked_rows),
         "answer_expectation_review_count": sum(
             row.get("answer_expectation_status") == "needs_review" for row in results
         ),
         "answer_automated_review_count": len(answer_checked_rows) - len(answer_passed_rows),
-        "advisor_review_required_count": sum(_requires_advisor_review(row) for row in results),
+        "advisor_review_required_count": len(required_reviews),
+        "advisor_review_completed_count": len(required_reviews & completed_reviews),
+        "advisor_review_partial_count": len((required_reviews & assessed_reviews) - completed_reviews),
+        "advisor_review_pending_count": len(required_reviews - completed_reviews),
+        "advisor_review_input_count": input_review_count,
+        **review_counts,
         "failure_rate": _safe_div(len(failed_results), len(results)),
         "failure_count": len(failed_results),
         "average_latency_seconds": _average(latencies),
         "median_latency_seconds": _percentile(latencies, 0.5),
         "p95_latency_seconds": _percentile(latencies, 0.95),
         "grounding_evaluated_turns": len(grounding_rows),
+        "grounding_unassessed_turns": sum(_grounding_payload(row).get("status") in (None, "", "not_assessed", "unassessed", "not_checked") for row in results),
+        "grounding_not_applicable_turns": sum(_grounding_payload(row).get("status") == "not_applicable" for row in results),
         "grounding_claim_turns": len(grounded_claim_rows),
         "grounding_review_rate": _safe_div(len(grounding_review_rows), len(grounding_rows)),
         "unsupported_claim_count": unsupported_claim_count,
@@ -465,6 +556,7 @@ def build_summary(results: List[Dict[str, Any]], reviews: List[Dict[str, Any]]) 
                 "answer_expectation_review_count": variant_summary.get("answer_expectation_review_count"),
                 "answer_automated_review_count": variant_summary.get("answer_automated_review_count"),
                 "advisor_review_required_count": variant_summary.get("advisor_review_required_count"),
+                "advisor_review_pending_count": variant_summary.get("advisor_review_pending_count"),
                 "failure_rate": variant_summary.get("failure_rate"),
                 "grounding_review_rate": variant_summary.get("grounding_review_rate"),
                 "average_unsupported_claim_rate": variant_summary.get("average_unsupported_claim_rate"),
@@ -484,11 +576,20 @@ def build_summary(results: List[Dict[str, Any]], reviews: List[Dict[str, Any]]) 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Summarize SPARA evaluation outputs.")
     parser.add_argument("--results", type=Path, default=DEFAULT_RESULTS_PATH)
-    parser.add_argument("--reviews", type=Path, default=DEFAULT_REVIEWS_PATH)
+    parser.add_argument("--reviews", type=Path, help="Optional review CSV; an explicitly supplied missing file is an error.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     args = parser.parse_args()
 
-    summary = build_summary(_load_jsonl(args.results), _load_csv(args.reviews))
+    try:
+        results = _load_jsonl(args.results)
+        if not results:
+            parser.error("Evaluation results contain no turns")
+        review_path = args.reviews or DEFAULT_REVIEWS_PATH
+        reviews = _load_csv(review_path) if args.reviews or review_path.exists() else []
+    except (OSError, ValueError) as exc:
+        parser.error(str(exc))
+    summary = build_summary(results, reviews)
+    summary["advisor_reviews_input_status"] = "loaded" if args.reviews or review_path.exists() else "not_provided"
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(summary, indent=2, ensure_ascii=False))

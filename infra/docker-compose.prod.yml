@@ -76,6 +76,8 @@ services:
       args:
         VITE_MS_URL: https://sparabot.com
         VITE_MS_SOCKETIO_URL: wss://sparabot.com
+        VITE_DEPLOYMENT_TAG: ${VITE_DEPLOYMENT_TAG:-}
+        VITE_BRANCH: ${VITE_BRANCH:-}
     container_name: spara-frontend
     restart: always
     networks:
