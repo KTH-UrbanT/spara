@@ -1,0 +1,283 @@
+SPARA: evidence mapping and minimum remaining pilot checks
+Updated: 2026-10-09
+
+Review basis
+386 saved messages across 38 conversations (sessions 61-98), for the supplied
+account only. These are historical live-chat results, not a fresh evaluation run.
+No model, ODEN or email calls were made for the history audit or offline fixes.
+This existing TXT replaces the old nine-full-conversation list.
+
+IMPLEMENTATION UPDATE, 2026-10-09
+The three agreed handover fixes are implemented locally:
+1. Explicit preview requests with "Skicka inget ännu" or "don't send" now create
+   a real pending preview and still require separate approval before sending.
+   Standalone refusal/cancellation and negated preview requests remain refusals.
+2. The summary prompt receives case evidence and authoritative current scope.
+   Operational scope/recipient/approval claims are excluded from the generated
+   case summary before consent is bound to it. Budget corrections are retained.
+3. Sending history requires execution provenance. Status replies cannot become
+   submissions. Replaced previews are superseded, cancellation is preserved,
+   and status replies avoid stale generated pending/cancelled summary prose.
+
+Verification: 774 targeted offline tests passed. The mocked six-turn release
+script covers preview, corrected budget/scope, status, cancellation and reload.
+Read-only replay of the actual saved session 94 confirms only messages 455/467
+are submissions; false legacy-message-513 is excluded; the two earlier previews
+are superseded; the latest preview is cancelled; restoration is repeatable.
+No model, ODEN or SMTP calls were made. No database records were modified.
+The running service must be rebuilt to use these changes. Historical failures
+below remain historical evidence; this update is not a new browser/live pass.
+
+Evidence rules
+- Reuse a passing conversation for the behavior it actually demonstrates.
+- A historical pass is not a new live pass on today's build.
+- Offline checks support the structural changes; they do not establish browser
+  rendering, downloads, cancellation or concurrency as live passes.
+- A failed turn stays open until a later result demonstrates that same behavior.
+- Do not restart full conversations just to repeat their already passing turns.
+- Judge building facts against their recorded source and calculation basis.
+
+User-confirmed production delivery, 2026-10-09
+The user reports receiving earlier emails from sparabot.com at shadaab@kth.se.
+Reuse this as user-confirmed evidence that production email delivery has worked;
+do not require another send test merely to establish delivery. The mailbox was
+not independently inspected: Outlook Email is available but not connected.
+Exact production messages have not been associated with local message IDs.
+Keep preview/status findings separate from the established sending capability.
+
+COVERAGE MAP
+
+1. General BRF advice without mandatory identification: REUSE PASS.
+   Oct8 early Q1, session 72, assistant messages 259-265.
+   Covers general heating advice, missing consumption data, a manager checklist
+   and a three-step summary, without forcing a BRF/address lookup.
+
+2. Follow-up memory, corrected budget and renovation limits: REUSE PASS.
+   F01, session 78, assistant messages 311-319.
+   Uses corrected 20,000 kr instead of 50,000 kr, avoids major renovations,
+   retains uneven-heating context and produces three next steps.
+   The older Oct7 budget/summary failures are superseded for these behaviors.
+
+3. Windows, laundry ventilation, stairwell lighting and stale air: REUSE PASS.
+   F02-F05, sessions 77, 79, 80 and 81, messages 301-343.
+   Contextual follow-ups, moisture/ventilation precautions and small-budget
+   operating measures have live evidence. No new broad advice conversations.
+
+4. Solar and unsupported exact financial estimates: REUSE PASS.
+   Oct8 late Q1, session 89, messages 403-411.
+   Does not invent a building-specific size, exact payback or exact savings
+   without the required inputs. Any illustrative calculation is conditional.
+
+5. Common streets across municipalities and choice within one municipality:
+   LATEST PASS. Oct9 Q2, session 95, messages 468-477.
+   Kungsgatan 10 -> Jönköping no-match -> correction to Stockholm -> both
+   candidate IDs with postcode/address -> explicit ID40 choice -> class B.
+   Final identity/class follow-up reuses verified facts (SQL call count zero).
+   Do not repeat this five-turn conversation.
+
+6. Address aliases and dated building evidence: LATEST PASS FOR THESE PARTS.
+   Oct9 Q3, session 96, messages 478-483.
+   Ringvägen 10 -> Stockholm -> 01-80-TAPETEN2-1, recorded Hornsgatan 104.
+   Correctly explains the shared verified ID and the 2018 declaration age.
+   The last metric-interpretation turn, message 485, is PARTIAL: it gives a
+   general distinction but drops the saved building evidence. That evidence
+   contains performance/specific energy 142 and a separate calculated 2020
+   primary-energy value 115. The calculation bases must remain distinct.
+   This is a known context gap, not a reason to repeat the address lookup.
+   It has not been fixed or cleared by this audit.
+
+7. Explicit ID switch, missing declared class, unknown ID and return:
+   REUSE THE COMBINED EVIDENCE; do not claim the latest full chain completed.
+   Oct9 Q4, session 97, messages 486-493: switches ID40 (declared/calculated B)
+   to ID39 (calculated E, declared class missing), remembers selected ID39,
+   then treats 00-00-PILOTFINNSEJ999-0 as not found with empty retrieved facts.
+   No old building facts are attributed to the unknown ID.
+   Return to ID40 already passed Oct8 late Q4, session 91, messages 432-433.
+   The return turn is absent from the latest chat. One current-chain return
+   turn is optional if needed; no complete five-turn rerun is necessary.
+
+8. BRF with several buildings, explicit choice and building-vs-association scope:
+   REUSE PASS. F09, session 85, messages 371-377.
+   BRF Friskytten returns SKYTTEN2-1/-2, uses the chosen building and does not
+   extend that record automatically to the entire association.
+
+9. Multipart facts/interpretation and unavailable original documents:
+   REUSE PASS. F11, session 87, messages 389-395.
+   Separates facts from interpretation and refuses unsupported verbatim quotes
+   from unavailable originals. Database facts are not the original document.
+
+10. Report creation, accurate creation status and downloadable export:
+    LATEST PASS FOR CREATION, STATUS AND SAVED CONTENT. Oct9 Q5, session 92,
+    messages 516-523. Both explicitly requested new reports were created;
+    follow-up 521 acknowledges the new draft, distinguishes it from an official
+    declaration and retains the current download descriptor.
+    Existing Redis artifacts f2bf8a3b-bf0e-4d32-9605-65fccde43122 and
+    e3f8433c-f3dc-46d5-adfd-6347b485c3f9 were read without regeneration.
+    Both contain only selected SKYTTEN2-2, declared G, separate calculated F,
+    date 2019-11-03, uneven heat and no major renovations this year. Both
+    technical appendices exclude the checked operational/account/query keys;
+    neither file body contains an email address. File sizes: 22,324/22,860 chars.
+    Browser download/reload remains a user observation, not proven by Redis.
+
+11. Multiple supplied addresses and candidate IDs per address:
+    LATEST PASS. Oct9 Q6, session 93, messages 494-495.
+    Correctly maps Tulegatan 5A to HAELSAN10-2 and Rådmansgatan 31 to both
+    HAELSAN10-1/-2 while preserving selected HAELSAN10-2. Supersedes 445.
+    No further per-address ID question is needed.
+
+12. Handover preview, sharing scope and server submission:
+    REUSE PASS FOR THESE PARTS. Oct8 late Q8, session 94, messages 450-455
+    and 464-467. Preview did not send; summary-only required separate approval.
+    SMTP accepted real messages. Inbox delivery is unconfirmed.
+    LATEST PASS FOR PREVIEW REVISION AND CANCELLATION. Oct9 messages 524-531:
+    real preview, summary-only revision with corrected budget 20,000 kr and
+    separate approval, then cancelled receipt for request 9f50cfde-c2b6-4385-
+    b9ea-7a3e038f9699. No new email submission is recorded in these turns.
+    STATUS HISTORY FAIL at 525-533: prior RouterAgent status answer 513 was
+    incorrectly converted to another legacy submitted receipt. Only 455/467
+    are the known actual SMTP submissions; 513 was a status answer.
+    PREVIEW TEXT PARTIAL: 525's full-transcript header conflicts with a body
+    claiming summary-only. At 527 the actual scope/header is summary-only,
+    but its body wrongly says the application still has full-conversation scope.
+    Status 533 identifies cancellation, but labels unapproved preview scopes
+    as approved and includes stale pending previews. These are narrow source/
+    state and presentation issues; repeating cancellation will not fix them.
+    The old records lack some scope/recipient receipt details: an honest
+    unknown is valid; reconstructing unsupported receipt details is not.
+    LATEST RELEASE SCRIPT FAIL, messages 534-545: the valid request to show a
+    full-conversation preview while not sending yet routed to GenericAgent.
+    It generated convincing preview text at 535 but no current preview ID,
+    pending confirmation or new receipt. Revision 536 and refusal 540 then
+    returned classification_failed (537/541). Status 539/543/545 described the
+    older cancelled preview, not the new requested preview, and retained the
+    phantom legacy-message-513 submission. Repeated status queries did not
+    grow the ledger further in this round, but the existing history is wrong.
+    No new email submission is recorded in this release-script round.
+    This adds preview-vs-send-negation routing to the same handover blockers;
+    it does not invalidate the earlier cancellation pass for a real preview.
+
+13. Additional Swedish street forms:
+    LATEST PASS. Oct9 Q8, session 94, messages 504-507.
+    Professorsslingan 51, Stockholm resolves to 01-80-FILOSOFEN2-3 with
+    declared class B, district heating, FTX and declaration date 2024-08-28.
+    No street-lookup rerun is needed.
+
+14. Language, message order, rating, new-chat first turn and restoration:
+    Backend Swedish -> English reply-language evidence exists in session 94.
+    This does not prove restored building-card labels follow each message.
+    All 119 assistant rows with in_reply_to_message_id point to the preceding
+    user; 48 older assistant rows lack that field. This does not prove the
+    new rapid-message case. Oct7 Q4 (session 64) had overlapping user messages
+    and duplicate assistant replies. No later overlapping live case was found.
+    All 11 newly reviewed assistant replies have the correct reply association.
+    LATEST BASIC OVERLAP PASS at messages 518-521: user follow-up 519 arrived
+    at 08:10:34 while report request 518 was processing until 08:12:06 UTC.
+    Replies 520/521 correctly associate to 518/519, in order and once each.
+    This closes the targeted overlap check; it does not certify arbitrary load.
+    The two generated reports correspond to two explicit user requests, not
+    duplicate assistant execution for a single request.
+    Oct9 new Q4, session 98, messages 514-515: FIRST SAVED TURN PASS, with
+    exactly one reply and no old building/report carried over. Reload/rendering
+    remain browser observations. One historical rating exists; current rating/
+    reload has not been independently inspected in this database review.
+    Message 503 answered a Swedish report-status question in English using
+    prior language metadata. Keep language handling open for investigation.
+
+MINIMUM CURRENT-BUILD CHECKLIST
+Latest read-only review: 12 further messages, up to 545 on 2026-10-09.
+The six-turn handover release script FAILED on the pre-fix running build.
+Existing building/report/basic ordering passes remain reusable. Further live
+handover checks should use the rebuilt service. No new real-send test is needed
+merely to establish delivery, which the user has already confirmed.
+B/C below are retained as exact regression scripts for after relevant fixes.
+The four handover issues below are IMPLEMENTED AND VERIFIED OFFLINE:
+- Preview requests with 'Skicka inget ännu' create a real pending preview.
+- Status-only answers cannot create phantom historical email submissions.
+- Generated case summaries exclude operational sharing/approval claims.
+- Status wording reflects unapproved/cancelled/superseded previews accurately.
+Known pilot limitations outside these three agreed tasks:
+- Earlier Q3 metric follow-up loses selected-building evidence.
+- Swedish report-status phrasing can inherit English language metadata.
+The remaining browser observations in D do not need additional model calls.
+
+A. Per-address IDs: CLOSED by messages 494-495; do not repeat.
+Chat: http://localhost:5173/chat/shadaab%40kth.se%3A05349ec8003a4cf1ac2a426309b34797
+Verified mapping:
+  Tulegatan 5A -> 01-80-HAELSAN10-2
+  Rådmansgatan 31 -> 01-80-HAELSAN10-1 and 01-80-HAELSAN10-2
+Keep the current selected building. No unrelated clarification or new city gate.
+
+B. CLOSED for creation/content/status/basic overlap; retained regression script.
+Chat: http://localhost:5173/chat/shadaab%40kth.se%3A41eaf43e6319448cb93477dad74afffa
+1) Skapa ett nytt nedladdningsbart rapportutkast till styrelsen med underlaget, våra observationer, osäkerheter och nästa steg.
+Wait for creation. Then send these two questions quickly without waiting between:
+2) Har du skapat en nedladdningsbar rapportfil?
+3) Är detta ett rapportutkast eller en officiell energideklaration?
+Expected:
+- Both status questions acknowledge the actual new draft; no denial of creation.
+- Correct reply association/order, no duplicate/lost answer or stuck processing.
+- Download/open the new file: selected 01-80-SKYTTEN2-2, declared G, separate
+  calculated 2020 F, declaration 2019-11-03, uneven heat and the stated limit
+  on major renovations. No raw account/session/debug/query dump.
+- Reload and download again while the link is valid.
+The two status questions use deterministic handlers in the current code; audit
+telemetry afterward rather than assuming a specific monetary cost.
+
+C. Cancellation/revision CLOSED; history/scope fixes VERIFIED OFFLINE.
+   Retained browser regression script for the rebuilt service.
+Chat: http://localhost:5173/chat/shadaab%40kth.se%3Abb45efbdbfe9420da887052449ef148b
+1) Vi vill få hjälp med ojämn värme. Budgeten är 50 000 kr. Visa vad som skulle skickas till en energirådgivare och vem som skulle få det.
+   Wait for a real configured-recipient preview requesting separate approval.
+   If no preview appears, record the result; do not count later refusal as a
+   pending-preview cancellation test.
+2) Skicka bara sammanfattningen. Rättelse: budgeten är nu 20 000 kr.
+3) Nej, skicka inte.
+4) Har något faktiskt skickats, och vad var det jag godkände att dela?
+Expected:
+- Turn 2 creates an updated preview using 20,000 kr, summary-only scope and
+  separate approval. It does not send based on the conditional wording.
+- Turn 3 cancels the new preview. No email is submitted for this new preview.
+- Turn 4 distinguishes the cancelled preview from the earlier real SMTP
+  submissions already recorded in this chat. No new send, false denial of all
+  historical submission or claim of confirmed inbox delivery.
+- Missing legacy scope/recipient details are stated honestly. The new preview
+  can have exact scope/recipient metadata; do not invent it for old receipts.
+
+D. Browser checks: reuse existing answers and the new report; no new turn.
+- Open Oct9 Q2, reload: first question, candidate list, selected ID40 card and
+  class/date are preserved; no duplicate ID label or wrong building card.
+- Open Oct9 Q4: the unknown-ID reply must not display the old verified card.
+- Inspect existing Swedish/English messages in Q8 before/after reload.
+- Open available source links and the new report link; check the destination
+  supports the cited material. Do not infer link validity from URL text alone.
+- Rate one existing answer, reload/reopen: rating remains on that same message.
+- New-chat first-message check is saved at:
+    http://localhost:5173/chat/shadaab%40kth.se%3Ae137bac664444305bde616d3b57e4eeb
+  Reload that existing conversation: one question/answer, no previous building/
+  report card. Database evidence already shows the correct clean first turn.
+
+OPTIONAL OR OFFLINE-ONLY COVERAGE: DO NOT MARK THESE LIVE-PASSED
+- Finish the current Q4 chain with one return turn if desired:
+    Gå tillbaka till 01-80-KAAKENHUSEN40-1 och visa energiklassen.
+  Prior return evidence already exists; this is not a full rerun.
+- Unsupported handover recipient/redaction changes have structural tests but
+  no live history. If required before freeze, insert two turns between C2/C3:
+    Skicka bara sammanfattningen till annan@example.com och utan mina kontaktuppgifter.
+    Visa en ny förhandsvisning med endast sammanfattningen.
+  Expect explicit disclosure that unsupported recipient/redaction changes have
+  not been applied, no silent fallback send, and separate approval. Then cancel.
+- Building-card language switching/restoration has not been established by the
+  existing English general messages. For a live check, append in Oct9 Q2:
+    Please answer in English. Which building is selected, and what is its energy class?
+  Compare the new English card with the earlier Swedish cards after reload.
+- Simulation mode was not live-tested: the old Q8 sends were real SMTP. Do not
+  repeat a real email merely to cover this. If test-mode operation is required,
+  configure/verify evaluation mode separately before any send approval.
+- Q3 metric follow-up remains a known selected-building context gap. Repeating
+  the same address conversation does not resolve that gap.
+
+COMPLETION RULE
+For each remaining behavior, record PASS, FAIL or BLOCKED with chat URL, message
+IDs and date. Use prior passing evidence for the closed behaviors above. Report
+browser results separately from database/offline evidence. These reduced checks
+can support a feedback pilot; they are not a guarantee of every future answer.

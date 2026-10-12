@@ -1,0 +1,8 @@
+case_id,turn_index,evaluation_id,reviewer_type,fully_swedish,task_observation,independent_advisor_review
+SV_01,0,spara-session-104,assistant,false,English greeting,pending
+SV_02,0,spara-session-105,assistant,false,English general advice; technical accuracy not certified,pending
+SV_02,1,spara-session-105,assistant,false,Context retained; English response and internal field names,pending
+SV_07,0,spara-session-106,assistant,false,Appropriate request for address in English,pending
+SV_09,0,spara-session-107,assistant,false,Correct arithmetic 15000 SEK per year; English explanation,pending
+SV_17,0,spara-session-108,assistant,false,General request mistaken for BRF proper name,pending
+SV_17,1,spara-session-108,assistant,false,Recovered general-advice scope; still English,pending

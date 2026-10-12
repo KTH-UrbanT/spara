@@ -1,0 +1,253 @@
+{
+  "recorded_at_utc": "2026-09-24T16:46:27.659684+00:00",
+  "scope": "Local pure-function execution and static prompt scan; no live model or UI",
+  "total": 27,
+  "passed": 14,
+  "failed": 13,
+  "checks": [
+    {
+      "check_id": "CONFIRM_1",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "ja",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "CONFIRM_2",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Ja tack!",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "CONFIRM_3",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Ja, skicka det.",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "CONFIRM_4",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Skicka mejlet.",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "CANCEL_1",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "nej",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "CANCEL_2",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Nej tack.",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "CANCEL_3",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Avbryt",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "CANCEL_4",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Skicka inte",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "CANCEL_5",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Inte nu",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "NO_CONSENT_1",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Ja, men ta bort kontaktuppgifterna först.",
+      "expected": false,
+      "actual": false,
+      "passed": true,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "NO_CONSENT_2",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Skicka inte",
+      "expected": false,
+      "actual": false,
+      "passed": true,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "NO_CONSENT_3",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Vad kommer att skickas?",
+      "expected": false,
+      "actual": false,
+      "passed": true,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "NO_CONSENT_4",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Jag är inte säker.",
+      "expected": false,
+      "actual": false,
+      "passed": true,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "REPORT_1",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Skapa en kort rapport till styrelsen.",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "REPORT_2",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Kan du sammanfatta samtalet i en rapport?",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "REPORT_3",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Vad innehåller en energirapport?",
+      "expected": false,
+      "actual": false,
+      "passed": true,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "REPORT_4",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Skapa ingen rapport ännu.",
+      "expected": false,
+      "actual": false,
+      "passed": true,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "HANDOFF_1",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Skicka detta till en energirådgivare.",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "HANDOFF_2",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Kan du kontakta en energi- och klimatrådgivare åt oss?",
+      "expected": true,
+      "actual": false,
+      "passed": false,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "HANDOFF_3",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Vad gör en energirådgivare?",
+      "expected": false,
+      "actual": false,
+      "passed": true,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "HANDOFF_4",
+      "source": "llm-service\\src\\agents\\router_agent.py",
+      "input": "Skicka inte detta till en energirådgivare.",
+      "expected": false,
+      "actual": false,
+      "passed": true,
+      "scope": "pure_function"
+    },
+    {
+      "check_id": "GREETING",
+      "source": "llm-service\\src\\pipeline\\agent_router.py",
+      "input": "Hej",
+      "expected": false,
+      "actual": false,
+      "passed": true,
+      "scope": "pure_function",
+      "observed_text": "Hej! Jag kan hjälpa dig med allmänna energiråd. Om du vill ha råd om en viss byggnad kan du ange föreningens namn, gatuadress eller byggnadsid."
+    },
+    {
+      "check_id": "PROMPT_generic_prompt.txt",
+      "source": "llm-service\\src\\prompts\\generic_prompt.txt",
+      "input": "English-only output instruction conflicts with Swedish conversation",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "scope": "static_prompt_scan"
+    },
+    {
+      "check_id": "PROMPT_openai_response_prompt.txt",
+      "source": "llm-service\\src\\prompts\\openai_response_prompt.txt",
+      "input": "English-only output instruction conflicts with Swedish conversation",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "scope": "static_prompt_scan"
+    },
+    {
+      "check_id": "PROMPT_building_response_generation_prompt.txt",
+      "source": "llm-service\\src\\prompts\\building_response_generation_prompt.txt",
+      "input": "English-only output instruction conflicts with Swedish conversation",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "scope": "static_prompt_scan"
+    },
+    {
+      "check_id": "PROMPT_clarification_prompt.txt",
+      "source": "llm-service\\src\\prompts\\clarification_prompt.txt",
+      "input": "English-only output instruction conflicts with Swedish conversation",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "scope": "static_prompt_scan"
+    },
+    {
+      "check_id": "PROMPT_expert_handoff_summary_prompt.txt",
+      "source": "llm-service\\src\\prompts\\expert_handoff_summary_prompt.txt",
+      "input": "English-only output instruction conflicts with Swedish conversation",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "scope": "static_prompt_scan"
+    }
+  ]
+}

@@ -11,6 +11,7 @@ DEFAULT_OUTPUT_PATH = REPO_ROOT / "evaluation" / "results" / "advisor_reviews.cs
 
 
 CSV_HEADERS = [
+    "run_id",
     "system_variant",
     "case_id",
     "turn_index",
@@ -95,6 +96,7 @@ def main() -> int:
             review_criteria = row.get("review_criteria") or expectation.get("review_criteria") or []
             writer.writerow(
                 {
+                    "run_id": row.get("run_id"),
                     "case_id": row.get("case_id"),
                     "system_variant": row.get("system_variant") or "full",
                     "turn_index": row.get("turn_index"),

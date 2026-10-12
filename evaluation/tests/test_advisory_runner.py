@@ -1,8 +1,10 @@
 from contextlib import nullcontext
+import json
 
 import pytest
 
 from evaluation.scripts.run_eval_cases import _run_case
+from evaluation.scripts import run_eval_cases as runner
 
 
 class ScriptedRouter:
@@ -76,3 +78,57 @@ def test_router_failure_preserves_review_contract_without_claiming_a_pass():
     assert rows[0]["requires_advisor_review"] is True
     assert rows[0]["review_criteria"] == criteria
     assert rows[0]["answer_expectation_status"] == "not_checked"
+
+
+def test_failed_turn_preserves_inherited_and_overridden_identity_field_contracts():
+    rows = run_case({"case_id": "FAIL_CONTRACT", "expected_building_id": "building-A",
+                     "expected_fields": ["energy_class"], "turns": [
+        {"user": "First"},
+        {"user": "Second", "expected_building_id": "building-B", "expected_fields": ["heating_system"]},
+        {"user": "Third", "expected_building_id": None, "expected_fields": []},
+    ]}, [RuntimeError("offline") for _ in range(3)])
+    assert [row["expected_building_id"] for row in rows] == ["building-A", "building-B", None]
+    assert [row["expected_fields"] for row in rows] == [["energy_class"], ["heating_system"], []]
+    assert all(row["retrieved_building_id"] is None and row["retrieved_facts"] == {} and row["failed"] for row in rows)
+
+
+def test_case_exclusions_are_opt_in_and_do_not_mutate_input():
+    cases = [{"case_id": case_id} for case_id in (*runner.RELEASE_EXCLUDED_CASE_IDS, "INCLUDED")]
+    assert runner._filter_cases(cases, case_id=None, route=None, limit=None) == cases
+    assert runner._filter_cases(cases, case_id=None, route=None, limit=None,
+                                exclude_case_ids=runner.RELEASE_EXCLUDED_CASE_IDS) == [{"case_id": "INCLUDED"}]
+    assert len(cases) == 3
+
+
+@pytest.mark.parametrize("release_scope", [False, True])
+def test_runner_records_complete_explicit_scope_manifest(tmp_path, monkeypatch, release_scope):
+    input_path, output = tmp_path / "cases.jsonl", tmp_path / "results.jsonl"
+    cases = [{"case_id": name, "question": "Synthetic question"} for name in (*runner.RELEASE_EXCLUDED_CASE_IDS, "INCLUDED")]
+    input_path.write_text("".join(json.dumps(case) + "\n" for case in cases), encoding="utf-8")
+    fake = ScriptedRouter([{"content": "Offline answer"} for _ in cases])
+    monkeypatch.setattr(runner, "_import_runtime", lambda: (object, lambda response, metadata: {"route": "generic"},
+                         lambda metadata: [], lambda operation: nullcontext(), lambda: {}))
+    monkeypatch.setattr(runner, "build_variant_router", lambda *args: fake)
+    argv = ["run_eval_cases", "--input", str(input_path), "--output", str(output)]
+    if release_scope:
+        argv.append("--release-scope")
+    monkeypatch.setattr("sys.argv", argv)
+    assert runner.main() == 0
+    scope = json.loads(output.with_suffix(".scope.json").read_text(encoding="utf-8"))
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+    assert scope["input_cases"] == scope["input_turns"] == 3
+    assert scope["expected_result_turns"] == scope["included_cases"] == len(rows) == (1 if release_scope else 3)
+    assert len(scope["excluded_cases"]) == (2 if release_scope else 0)
+    assert all(row["run_id"] == scope["run_id"] for row in rows)
+    assert input_path.read_text(encoding="utf-8") == "".join(json.dumps(case) + "\n" for case in cases)
+
+
+@pytest.mark.parametrize("options", [["--exclude-case-id", "UNKNOWN"], ["--case-id", "UNKNOWN"], ["--limit", "0"]])
+def test_invalid_or_empty_case_selection_fails_before_runtime_import(tmp_path, monkeypatch, options):
+    input_path = tmp_path / "cases.jsonl"
+    input_path.write_text(json.dumps({"case_id": "CASE", "question": "Offline"}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(runner, "_import_runtime", lambda: pytest.fail("Runtime must not be imported"))
+    monkeypatch.setattr("sys.argv", ["run_eval_cases", "--input", str(input_path), *options])
+    with pytest.raises(SystemExit) as exc:
+        runner.main()
+    assert exc.value.code == 2
