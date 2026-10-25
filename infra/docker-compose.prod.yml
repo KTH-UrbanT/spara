@@ -1,8 +1,6 @@
 name: spara
+
 services:
-  ############################
-  #  1) Redis                #
-  ############################
   redis:
     image: redis:latest
     container_name: spara-redis
@@ -12,28 +10,6 @@ services:
     ports:
       - "6379:6379"
 
-  ############################
-  #  2) PostgreSQL           #
-  ############################
-  message_store:
-    image: postgres:13
-    container_name: spara-postgres
-    restart: always
-    networks:
-      - spara_network
-    ports:
-      - "5433:5432"
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: message_store
-    volumes:
-      - message_store_data:/var/lib/postgresql/data
-      - ../shared/db/init.sql:/docker-entrypoint-initdb.d/init.sql
-
-  ############################
-  #  3) Message Service      #
-  ############################
   message-service:
     build:
       context: ../message-service
@@ -44,15 +20,11 @@ services:
       - spara_network
     depends_on:
       - redis
-      - message_store
     ports:
       - "8000:8000"
     env_file:
       - ../message-service/.env
 
-  ############################
-  #  4) LLM Service          #
-  ############################
   llm-service:
     build:
       context: ../llm-service
@@ -63,12 +35,12 @@ services:
       - spara_network
     depends_on:
       - redis
+    env_file:
+      - ../llm-service/.env
     environment:
-      REDIS_HOST: spara-redis
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
 
-  ############################
-  #  5) Frontend (React)     #
-  ############################
   frontend:
     build:
       context: ../frontend
@@ -86,9 +58,6 @@ services:
       - "8800:80"
     depends_on:
       - message-service
-
-volumes:
-  message_store_data:
 
 networks:
   spara_network:
